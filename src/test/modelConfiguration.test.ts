@@ -32,13 +32,14 @@ suite("modelConfiguration", () => {
 		assert.strictEqual(isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", reasoning_effort: "" }), false);
 		assert.strictEqual(isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", reasoning_effort: "custom" }), false);
 		assert.strictEqual(isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", reasoning_effort: "high" }), true);
+		assert.strictEqual(isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", reasoning_effort: "none" }), true);
 	});
 
 	test("defines reasoning effort choices for provider configuration", () => {
 		const schema = REASONING_EFFORT_CONFIGURATION_SCHEMA.properties.reasoningEffort;
 		assert.strictEqual(schema.title, "Reasoning Effort");
 		assert.strictEqual(schema.default, "medium");
-		assert.deepStrictEqual(schema.enum, ["minimal", "low", "medium", "high", "xhigh", "max"]);
+		assert.deepStrictEqual(schema.enum, ["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 		assert.strictEqual(createReasoningEffortConfigurationSchema("high").properties.reasoningEffort.default, "high");
 	});
 

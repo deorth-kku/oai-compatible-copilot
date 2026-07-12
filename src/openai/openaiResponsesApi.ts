@@ -257,11 +257,15 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 		// OpenAI reasoning configuration
 		if (isReasoningEffortPickerEnabled(um)) {
-			const existing = isPlainObject(rb.reasoning) ? { ...(rb.reasoning as Record<string, unknown>) } : {};
-			rb.reasoning = {
-				...existing,
-				effort: getConfiguredReasoningEffort(options, getModelDefaultReasoningEffort(um)),
-			};
+			const effort = getConfiguredReasoningEffort(options, getModelDefaultReasoningEffort(um));
+			// "none" disables reasoning: omit the `reasoning` object entirely.
+			if (effort !== "none") {
+				const existing = isPlainObject(rb.reasoning) ? { ...(rb.reasoning as Record<string, unknown>) } : {};
+				rb.reasoning = {
+					...existing,
+					effort,
+				};
+			}
 		} else if (um?.reasoning_effort !== undefined) {
 			const existing = isPlainObject(rb.reasoning) ? { ...(rb.reasoning as Record<string, unknown>) } : {};
 			rb.reasoning = {

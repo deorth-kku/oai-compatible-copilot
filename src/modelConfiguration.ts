@@ -1,9 +1,10 @@
 import type * as vscode from "vscode";
 import type { HFModelItem } from "./types";
 
-export type ReasoningEffortPickerValue = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffortPickerValue = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const REASONING_EFFORT_VALUES: readonly ReasoningEffortPickerValue[] = [
+	"none",
 	"minimal",
 	"low",
 	"medium",
@@ -18,8 +19,9 @@ export const REASONING_EFFORT_CONFIGURATION_SCHEMA = {
 			type: "string",
 			title: "Reasoning Effort",
 			enum: REASONING_EFFORT_VALUES,
-			enumItemLabels: ["Minimal", "Low", "Medium", "High", "XHigh", "Max"],
+			enumItemLabels: ["None", "Minimal", "Low", "Medium", "High", "XHigh", "Max"],
 			enumDescriptions: [
+				"Disable reasoning / thinking",
 				"Smallest reasoning budget",
 				"Low reasoning budget",
 				"Balanced reasoning budget",
