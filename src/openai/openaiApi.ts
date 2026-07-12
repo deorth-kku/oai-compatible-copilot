@@ -8,7 +8,7 @@ import {
 } from "vscode";
 
 import type { HFModelItem, ReasoningConfig, TokenUsage } from "../types";
-import { getConfiguredReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
+import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 
 import type {
 	OpenAIChatMessage,
@@ -193,7 +193,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
 		// OpenAI reasoning configuration
 		if (isReasoningEffortPickerEnabled(um)) {
-			rb.reasoning_effort = getConfiguredReasoningEffort(options, um.reasoning_effort);
+			rb.reasoning_effort = getConfiguredReasoningEffort(options, getModelDefaultReasoningEffort(um));
 		} else if (um?.reasoning_effort !== undefined) {
 			rb.reasoning_effort = um.reasoning_effort;
 		}
@@ -220,7 +220,13 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			const reasoningConfig: ReasoningConfig = um.reasoning as ReasoningConfig;
 			if (reasoningConfig.enabled !== false) {
 				const reasoningObj: Record<string, unknown> = {};
-				const effort = reasoningConfig.effort;
+				// Use the UI-selected reasoning effort only when the model offers the picker
+				// (i.e. it has a valid `reasoning_effort` or `reasoning.effort` default);
+				// otherwise fall back to the model's configured `reasoning.effort`.
+				const uiEffort = isReasoningEffortPickerEnabled(um)
+					? getConfiguredReasoningEffort(options)
+					: undefined;
+				const effort = uiEffort ?? reasoningConfig.effort;
 				const maxTokensReasoning = reasoningConfig.max_tokens || 2000; // Default 2000 as per docs
 				if (effort && effort !== "auto") {
 					reasoningObj.effort = effort;

@@ -56,15 +56,31 @@ export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
 	readonly configurationSchema?: ReturnType<typeof createReasoningEffortConfigurationSchema>;
 };
 
-export function isReasoningEffortPickerEnabled(
+/**
+ * Resolve the default reasoning effort for a model from either the OpenAI-style
+ * top-level `reasoning_effort` field or the OpenRouter-style nested
+ * `reasoning.effort` field. Returns `undefined` when neither is a valid picker
+ * value (i.e. the UI picker should not be offered for this model).
+ */
+export function getModelDefaultReasoningEffort(
 	model: HFModelItem | undefined
-): model is HFModelItem & { reasoning_effort: ReasoningEffortPickerValue } {
-	return isReasoningEffortValue(model?.reasoning_effort);
+): ReasoningEffortPickerValue | undefined {
+	if (isReasoningEffortValue(model?.reasoning_effort)) {
+		return model.reasoning_effort;
+	}
+	if (isReasoningEffortValue(model?.reasoning?.effort)) {
+		return model.reasoning.effort;
+	}
+	return undefined;
+}
+
+export function isReasoningEffortPickerEnabled(model: HFModelItem | undefined): boolean {
+	return getModelDefaultReasoningEffort(model) !== undefined;
 }
 
 export function getConfiguredReasoningEffort(
 	options: vscode.ProvideLanguageModelChatResponseOptions | undefined,
-	fallback: ReasoningEffortPickerValue = "medium"
+	fallback?: ReasoningEffortPickerValue
 ): ReasoningEffortPickerValue {
 	const modelOptions = options as ModelConfigurationOptions | undefined;
 	const configuredEffort =
@@ -73,7 +89,7 @@ export function getConfiguredReasoningEffort(
 	if (isReasoningEffortValue(configuredEffort)) {
 		return configuredEffort;
 	}
-	return fallback;
+	return fallback ?? "medium";
 }
 
 export function isReasoningEffortValue(value: unknown): value is ReasoningEffortPickerValue {

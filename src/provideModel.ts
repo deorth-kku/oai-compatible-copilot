@@ -4,8 +4,8 @@ import { CancellationToken, LanguageModelChatInformation } from "vscode";
 import type { HFApiMode, HFModelItem, HFModelsResponse } from "./types";
 import {
 	createReasoningEffortConfigurationSchema,
+	getModelDefaultReasoningEffort,
 	type ModelPickerChatInformation,
-	isReasoningEffortValue,
 } from "./modelConfiguration";
 import { normalizeUserModels } from "./utils";
 import { VersionManager } from "./versionManager";
@@ -46,7 +46,7 @@ export async function prepareLanguageModelChatInformation(
 				const modelId = m.configId ? `${m.id}::${m.configId}` : m.id;
 				const modelName = m.displayName || (m.configId ? `${m.id}::${m.configId}` : `${m.id}`);
 				const detail = m.owned_by ? `${m.owned_by} (${EXTENSION_LABEL})` : EXTENSION_LABEL;
-				const reasoningEffort = isReasoningEffortValue(m.reasoning_effort) ? m.reasoning_effort : undefined;
+				const reasoningEffort = getModelDefaultReasoningEffort(m);
 
 				return {
 					id: modelId,

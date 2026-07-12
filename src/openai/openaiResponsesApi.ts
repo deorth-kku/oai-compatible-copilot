@@ -8,7 +8,7 @@ import {
 } from "vscode";
 
 import type { HFModelItem } from "../types";
-import { getConfiguredReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
+import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 import type { OpenAIToolCall } from "./openaiTypes";
 
 import {
@@ -260,7 +260,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			const existing = isPlainObject(rb.reasoning) ? { ...(rb.reasoning as Record<string, unknown>) } : {};
 			rb.reasoning = {
 				...existing,
-				effort: getConfiguredReasoningEffort(options, um.reasoning_effort),
+				effort: getConfiguredReasoningEffort(options, getModelDefaultReasoningEffort(um)),
 			};
 		} else if (um?.reasoning_effort !== undefined) {
 			const existing = isPlainObject(rb.reasoning) ? { ...(rb.reasoning as Record<string, unknown>) } : {};
