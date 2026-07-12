@@ -168,6 +168,7 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
+		this.beginReasoningCapture();
 		logger.debug("ollama.stream.start", { modelId });
 
 		const reader = responseBody.getReader();

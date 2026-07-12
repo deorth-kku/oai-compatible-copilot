@@ -81,11 +81,15 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean }
+		modelConfig: { includeReasoningInRequest: boolean },
+		startIndex?: number
 	): ResponsesInputItem[] {
+		const base = startIndex ?? 0;
 		const out: ResponsesInputItem[] = [];
 
-		for (const m of messages) {
+		for (let i = 0; i < messages.length; i++) {
+			const m = messages[i];
+			const absIndex = base + i;
 			const role = mapRole(m);
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
@@ -132,13 +136,28 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					});
 				}
 
-				if (joinedThinking) {
-					out.push({
-						summary: [{ type: "summary_text", text: joinedThinking }],
-						type: "reasoning",
-						id: `tk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-						status: "completed",
-					});
+				if (modelConfig.includeReasoningInRequest || joinedThinking) {
+					// Prefer the longer of the round-tripped thinking and the cached
+					// full trace. Copilot Chat may round-trip only a fragment of the
+					// previous turn's thinking into history (e.g. "."), so the cached
+					// full trace is often more complete. Key by this item's absolute
+					// conversation index so each turn keeps its own reasoning.
+					const turnKey = `${this._modelId}#${absIndex}`;
+					const cached = this.getCachedReasoning(turnKey);
+					const reasoning =
+						joinedThinking && cached
+							? joinedThinking.length >= cached.length
+								? joinedThinking
+								: cached
+							: joinedThinking || cached;
+					if (reasoning) {
+						out.push({
+							summary: [{ type: "summary_text", text: reasoning }],
+							type: "reasoning",
+							id: `tk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+							status: "completed",
+						});
+					}
 				}
 
 				for (const tc of toolCalls) {
@@ -302,6 +321,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		token: CancellationToken
 	): Promise<void> {
 		this._responseId = null;
+		this.beginReasoningCapture();
 		const modelId = this._modelId;
 		logger.debug("responses.stream.start", { modelId });
 		const reader = responseBody.getReader();

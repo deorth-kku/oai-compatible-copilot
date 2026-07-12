@@ -770,6 +770,7 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
+		this.beginReasoningCapture();
 		logger.debug("gemini.stream.start", { modelId });
 		const reader = responseBody.getReader();
 		const decoder = new TextDecoder();

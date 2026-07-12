@@ -48,6 +48,72 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	/** Timer for delayed flushing of thinking buffer. */
 	protected _thinkingFlushTimer: NodeJS.Timeout | null = null;
 
+	/**
+	 * Cache of the last real reasoning text, keyed per turn. Copilot Chat does not
+	 * always round-trip assistant `LanguageModelThinkingPart`s into the next
+	 * request's history (the thinking is only persisted as an opaque
+	 * `ThinkingData` block that may be dropped on rebuild). When `convertMessages`
+	 * cannot find a `LanguageModelThinkingPart` for an assistant turn, we replay
+	 * the cached real reasoning instead of fabricating a placeholder.
+	 *
+	 * Keyed by `${modelId}#${index}` where `index` is the absolute position the
+	 * assistant response occupies in the (append-only) conversation. This keeps
+	 * each assistant turn's reasoning distinct across a multi-turn conversation;
+	 * a single global value would make every replayed assistant item share the
+	 * last turn's reasoning.
+	 */
+	private static readonly _reasoningByTurn: Map<string, string> = new Map<string, string>();
+
+	/**
+	 * Per-turn accumulator of reasoning text. Reasoning is streamed to the UI in
+	 * 100ms-buffered chunks that are contiguous fragments of one continuous trace,
+	 * so we must concatenate each chunk verbatim (no separators) rather than
+	 * overwrite, otherwise only the final fragment survives and gets replayed
+	 * next turn (e.g. "what they would like me to do next." instead of the
+	 * full trace).
+	 */
+	protected _turnReasoning = "";
+
+	/** Turn key under which the current streaming turn's reasoning is cached. */
+	protected _currentTurnKey = "";
+
+	/**
+	 * Set the turn key for the current turn. Called by the provider before
+	 * `convertMessages`/`processStreamingResponse` so both the replay lookup and
+	 * the capture write target the same turn.
+	 */
+	setCurrentTurnKey(key: string): void {
+		this._currentTurnKey = key;
+	}
+
+	/** Record the real reasoning produced for this model so later turns can replay it. */
+	protected cacheReasoning(text: string): void {
+		if (text && this._currentTurnKey) {
+			this._turnReasoning += text;
+			CommonApi._reasoningByTurn.set(this._currentTurnKey, this._turnReasoning);
+		}
+	}
+
+	/**
+	 * Reset the per-turn reasoning accumulator. Call this at the start of each
+	 * streaming turn so a new turn accumulates fresh reasoning and the previously
+	 * cached full trace remains available for convertMessages (which runs before
+	 * streaming) to replay into the outgoing request.
+	 */
+	protected beginReasoningCapture(): void {
+		this._turnReasoning = "";
+	}
+
+	/**
+	 * Best-effort real reasoning for a given turn key, or undefined if none.
+	 * @param turnKey The turn key (defaults to the current streaming turn).
+	 */
+	protected getCachedReasoning(turnKey?: string): string | undefined {
+		const key = turnKey ?? this._currentTurnKey;
+		const cached = key ? CommonApi._reasoningByTurn.get(key) : undefined;
+		return cached ? cached.trim() : undefined;
+	}
+
 	/** System prompts to include in requests. */
 	protected _systemContent: string | undefined;
 
@@ -65,11 +131,15 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Convert VS Code chat messages to specific api message format.
 	 * @param messages The VS Code chat messages to convert.
 	 * @param modelConfig Config for special model.
+	 * @param startIndex Absolute index of `messages[0]` in the full conversation
+	 *   (default 0). Used to derive per-turn cache keys that stay aligned with the
+	 *   streaming capture key even when only a delta slice is converted.
 	 * @returns Specific api messages array.
 	 */
 	abstract convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean }
+		modelConfig: { includeReasoningInRequest: boolean },
+		startIndex?: number
 	): TMessage[];
 
 	/**
@@ -272,6 +342,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		if (this._thinkingBuffer && this._currentThinkingId) {
 			const text = this._thinkingBuffer;
 			this._thinkingBuffer = "";
+			this.cacheReasoning(text);
 			progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId));
 		}
 	}

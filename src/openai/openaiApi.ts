@@ -44,10 +44,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean }
+		modelConfig: { includeReasoningInRequest: boolean },
+		startIndex?: number
 	): OpenAIChatMessage[] {
+		const base = startIndex ?? 0;
 		const out: OpenAIChatMessage[] = [];
-		for (const m of messages) {
+		for (let i = 0; i < messages.length; i++) {
+			const m = messages[i];
+			const absIndex = base + i;
 			const role = mapRole(m);
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
@@ -93,7 +97,22 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 				}
 
 				if (modelConfig.includeReasoningInRequest) {
-					assistantMessage.reasoning_content = joinedThinking || "Next step.";
+					// Prefer the longer of the round-tripped thinking and the cached
+					// full trace. Copilot Chat may round-trip only a fragment of the
+					// previous turn's thinking into history (e.g. "."), so the cached
+					// full trace is often more complete. Key by this item's absolute
+					// conversation index so each turn keeps its own reasoning.
+					const turnKey = `${this._modelId}#${absIndex}`;
+					const cached = this.getCachedReasoning(turnKey);
+					const reasoning =
+						joinedThinking && cached
+							? joinedThinking.length >= cached.length
+								? joinedThinking
+								: cached
+							: joinedThinking || cached;
+					if (reasoning) {
+						assistantMessage.reasoning_content = reasoning;
+					}
 				}
 
 				if (toolCalls.length > 0) {
@@ -279,6 +298,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
+		this.beginReasoningCapture();
 		logger.debug("openai.stream.start", { modelId });
 
 		const reader = responseBody.getReader();

@@ -417,6 +417,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
+		this.beginReasoningCapture();
 		logger.debug("anthropic.stream.start", { modelId });
 
 		const reader = responseBody.getReader();

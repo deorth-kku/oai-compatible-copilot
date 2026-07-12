@@ -289,6 +289,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
 				const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
 				const statefulModelId = parsedModelId.baseId;
+				// Key the current turn by the absolute index the response will occupy
+				// in the full history (append-only), so it matches the replay key.
+				openaiResponsesApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
 
 				// Convert full history once (also extracts system `instructions`).
 				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
@@ -297,7 +300,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				let deltaInput: unknown[] | null = null;
 				if (marker && marker.index >= 0 && marker.index < messages.length - 1) {
 					const deltaMessages = messages.slice(marker.index + 1);
-					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
+					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig, marker.index + 1);
 					if (converted.length > 0) {
 						deltaInput = converted;
 					}
@@ -458,6 +461,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
+				// Key the current turn by the absolute index the response will occupy
+				// (the conversation is append-only, so this matches the replay key).
+				openaiApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
 				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
 
 				// requestBody
