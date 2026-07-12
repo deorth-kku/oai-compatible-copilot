@@ -289,6 +289,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
 				const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
 				const statefulModelId = parsedModelId.baseId;
+				// Derive the conversation id from the request history so the reasoning
+				// cache is scoped per conversation (VS Code only round-trips text
+				// content, so we can't carry a random id; we hash the first user
+				// message). Prevents switching sessions from leaking reasoning.
+				openaiResponsesApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// in the full history (append-only), so it matches the replay key.
 				openaiResponsesApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
@@ -461,6 +466,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
+				// Derive the conversation id from the request history so the reasoning
+				// cache is scoped per conversation (VS Code only round-trips text
+				// content, so we can't carry a random id; we hash the first user
+				// message). Prevents switching sessions from leaking reasoning.
+				openaiApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).
 				openaiApi.setCurrentTurnKey(`${model.id}#${messages.length}`);

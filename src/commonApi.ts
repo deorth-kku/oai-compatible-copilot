@@ -49,18 +49,19 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	protected _thinkingFlushTimer: NodeJS.Timeout | null = null;
 
 	/**
-	 * Cache of the last real reasoning text, keyed per turn. Copilot Chat does not
-	 * always round-trip assistant `LanguageModelThinkingPart`s into the next
-	 * request's history (the thinking is only persisted as an opaque
+	 * Cache of the last real reasoning text, keyed per turn *and* per conversation.
+	 * Copilot Chat does not always round-trip assistant `LanguageModelThinkingPart`s
+	 * into the next request's history (the thinking is only persisted as an opaque
 	 * `ThinkingData` block that may be dropped on rebuild). When `convertMessages`
 	 * cannot find a `LanguageModelThinkingPart` for an assistant turn, we replay
 	 * the cached real reasoning instead of fabricating a placeholder.
 	 *
-	 * Keyed by `${modelId}#${index}` where `index` is the absolute position the
-	 * assistant response occupies in the (append-only) conversation. This keeps
-	 * each assistant turn's reasoning distinct across a multi-turn conversation;
-	 * a single global value would make every replayed assistant item share the
-	 * last turn's reasoning.
+	 * Keyed by `${convId}#${modelId}#${index}` where `index` is the absolute
+	 * position the assistant response occupies in the (append-only) conversation
+	 * and `convId` is a per-conversation id round-tripped via a data-part marker.
+	 * The `convId` is what stops reasoning from one chat session leaking into
+	 * another ("串台"): without it, two unrelated sessions with the same model and
+	 * the same message count would share a cache key.
 	 */
 	private static readonly _reasoningByTurn: Map<string, string> = new Map<string, string>();
 
@@ -74,8 +75,80 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected _turnReasoning = "";
 
-	/** Turn key under which the current streaming turn's reasoning is cached. */
+	/** Turn key (without convId) under which the current streaming turn's reasoning is cached. */
 	protected _currentTurnKey = "";
+
+	/**
+	 * Per-conversation id derived from the request history. VS Code only
+	 * round-trips plain text content (any extra data-parts are dropped — a VS Code
+	 * bug), so we cannot carry a random session id forward. Instead we derive the
+	 * id from the first user message's text content, which is stable for a given
+	 * conversation and differs between conversations. This scopes the reasoning
+	 * cache so sessions don't leak into each other ("串台").
+	 */
+	protected _convId = "";
+
+	/**
+	 * Derive and store the conversation id from the request messages. Called by
+	 * the provider before `convertMessages`/`processStreamingResponse`. The id is
+	 * recomputed every turn from the (append-only) history, so it stays aligned
+	 * across turns of the same conversation without any round-tripped state.
+	 */
+	setConvIdFromMessages(messages: readonly LanguageModelChatRequestMessage[]): void {
+		this._convId = CommonApi.computeConvId(messages);
+	}
+
+	/**
+	 * Stable conversation id derived from the request history.
+	 *
+	 * The first user message is Copilot's injected environment/workspace context
+	 * (system-like, near-identical across sessions in the same workspace), so it
+	 * cannot distinguish conversations. We use the **second** user message — the
+	 * user's actual prompt — which is stable for a conversation and differs between
+	 * them. Only when there is no second user message (e.g. a brand-new single-turn
+	 * request before the first prompt has been recorded) do we fall back to the
+	 * first user message.
+	 */
+	private static computeConvId(messages: readonly LanguageModelChatRequestMessage[]): string {
+		let userCount = 0;
+		let firstUserText = "";
+		for (const m of messages) {
+			if (m.role !== vscode.LanguageModelChatMessageRole.User) {
+				continue;
+			}
+			const text = (m.content ?? [])
+				.filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
+				.map((p) => p.value)
+				.join("")
+				.trim();
+			if (!text) {
+				continue;
+			}
+			userCount++;
+			if (userCount === 1) {
+				firstUserText = text;
+			} else if (userCount === 2) {
+				// The user's real prompt — this is what distinguishes conversations.
+				return CommonApi.hashString(text);
+			}
+		}
+		// Fall back to the first (injected) user message, then to a structural
+		// signature so distinct histories still get distinct ids.
+		if (firstUserText) {
+			return CommonApi.hashString(firstUserText);
+		}
+		const signature = messages.map((m) => m.role).join(",");
+		return CommonApi.hashString(`empty:${messages.length}:${signature}`);
+	}
+
+	private static hashString(s: string): string {
+		let h = 0x811c9dc5;
+		for (let i = 0; i < s.length; i++) {
+			h ^= s.charCodeAt(i);
+			h = Math.imul(h, 0x01000193) >>> 0;
+		}
+		return h.toString(36);
+	}
 
 	/**
 	 * Set the turn key for the current turn. Called by the provider before
@@ -86,11 +159,16 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		this._currentTurnKey = key;
 	}
 
+	/** Build the full cache key (conversation-scoped) for a turn key. */
+	private reasoningKey(turnKey: string): string {
+		return this._convId ? `${this._convId}#${turnKey}` : turnKey;
+	}
+
 	/** Record the real reasoning produced for this model so later turns can replay it. */
 	protected cacheReasoning(text: string): void {
 		if (text && this._currentTurnKey) {
 			this._turnReasoning += text;
-			CommonApi._reasoningByTurn.set(this._currentTurnKey, this._turnReasoning);
+			CommonApi._reasoningByTurn.set(this.reasoningKey(this._currentTurnKey), this._turnReasoning);
 		}
 	}
 
@@ -110,7 +188,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected getCachedReasoning(turnKey?: string): string | undefined {
 		const key = turnKey ?? this._currentTurnKey;
-		const cached = key ? CommonApi._reasoningByTurn.get(key) : undefined;
+		const cached = key ? CommonApi._reasoningByTurn.get(this.reasoningKey(key)) : undefined;
 		return cached ? cached.trim() : undefined;
 	}
 
