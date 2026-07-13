@@ -43,11 +43,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	/**
 	 * Create a provider using the given secret storage for the API key.
 	 * @param secrets VS Code secret storage.
+	 * @param statusBarItem The status bar item for token display.
+	 * @param globalState Memento used to persist the reasoning replay cache across sessions.
 	 */
 	constructor(
 		private readonly secrets: vscode.SecretStorage,
-		private readonly statusBarItem: vscode.StatusBarItem
-	) {}
+		private readonly statusBarItem: vscode.StatusBarItem,
+		private readonly globalState?: vscode.Memento
+	) {
+		if (globalState) {
+			CommonApi.setMemento(globalState);
+		}
+	}
 
 	/**
 	 * Get the list of available language models contributed by this provider

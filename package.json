@@ -460,6 +460,13 @@
 					"minimum": 0,
 					"maximum": 10000,
 					"description": "Number of lines to read when using `read_file` tool. Large lines may cost more tokens. Default is 0, let model decide lines."
+				},
+				"oaicopilot.reasoningCacheMax": {
+					"type": "number",
+					"default": 1024,
+					"minimum": 0,
+					"maximum": 100000,
+					"description": "Maximum number of reasoning replay entries to persist across sessions (LRU). 0 means unbounded. Each entry is one assistant turn's reasoning trace, keyed per conversation and model. Higher values improve multi-turn reasoning replay after window reload but use more globalStorage."
 				}
 			}
 		}

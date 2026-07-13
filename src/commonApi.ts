@@ -66,6 +66,103 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	private static readonly _reasoningByTurn: Map<string, string> = new Map<string, string>();
 
 	/**
+	 * Persisted mirror of `_reasoningByTurn` in `context.globalState` (Memento) so the
+	 * reasoning replay survives extension reload / window restart. The in-memory `Map`
+	 * remains the synchronous hot cache (`getCachedReasoning` runs inside the synchronous
+	 * `convertMessages`), and we write through to storage on a debounce. Storage reads
+	 * are synchronous (`Memento.get`), so `hydrate` can populate the Map at `activate()`
+	 * before any request runs.
+	 */
+	private static readonly REASONING_CACHE_KEY = "oaicopilot.reasoningCache";
+	private static readonly REASONING_CACHE_MAX_DEFAULT = 1024;
+	private static _memento: vscode.Memento | null = null;
+	private static _persistTimer: NodeJS.Timeout | null = null;
+
+	/** Attach the Memento used to persist the reasoning cache across sessions. */
+	static setMemento(memento: vscode.Memento): void {
+		CommonApi._memento = memento;
+	}
+
+	/** Load any persisted cache from storage into the in-memory Map. Call at activate(). */
+	static hydrate(): void {
+		if (!CommonApi._memento) {
+			return;
+		}
+		try {
+			const stored = CommonApi._memento.get<Record<string, string>>(CommonApi.REASONING_CACHE_KEY);
+			if (stored && typeof stored === "object") {
+				for (const [k, v] of Object.entries(stored)) {
+					if (typeof k === "string" && typeof v === "string") {
+						CommonApi._reasoningByTurn.set(k, v);
+					}
+				}
+			}
+		} catch (e) {
+			logger.error("reasoningCache.hydrate.error", { error: e instanceof Error ? e.message : String(e) });
+		}
+	}
+
+	/** Max number of entries to keep (LRU). <= 0 means unbounded. */
+	private static getMaxEntries(): number {
+		const cfg = vscode.workspace.getConfiguration();
+		const max = cfg.get<number>("oaicopilot.reasoningCacheMax", CommonApi.REASONING_CACHE_MAX_DEFAULT);
+		return typeof max === "number" && max > 0 ? Math.floor(max) : 0;
+	}
+
+	/** Evict oldest entries (front of the insertion-ordered Map) when over the cap. */
+	private static enforceCap(): void {
+		const max = CommonApi.getMaxEntries();
+		if (max <= 0) {
+			return;
+		}
+		let overflow = CommonApi._reasoningByTurn.size - max;
+		if (overflow <= 0) {
+			return;
+		}
+		for (const key of CommonApi._reasoningByTurn.keys()) {
+			if (overflow <= 0) {
+				break;
+			}
+			CommonApi._reasoningByTurn.delete(key);
+			overflow--;
+		}
+	}
+
+	/** Schedule a debounced write-through of the current Map to storage. */
+	private static schedulePersist(): void {
+		if (!CommonApi._memento) {
+			return;
+		}
+		CommonApi.enforceCap();
+		if (CommonApi._persistTimer) {
+			clearTimeout(CommonApi._persistTimer);
+		}
+		CommonApi._persistTimer = setTimeout(() => {
+			void CommonApi.flushNow();
+		}, 500);
+	}
+
+	/** Force an immediate write-through to storage (best-effort, never throws). */
+	static async flushNow(): Promise<void> {
+		if (!CommonApi._memento) {
+			return;
+		}
+		if (CommonApi._persistTimer) {
+			clearTimeout(CommonApi._persistTimer);
+			CommonApi._persistTimer = null;
+		}
+		try {
+			const record: Record<string, string> = {};
+			for (const [k, v] of CommonApi._reasoningByTurn.entries()) {
+				record[k] = v;
+			}
+			await CommonApi._memento.update(CommonApi.REASONING_CACHE_KEY, record);
+		} catch (e) {
+			logger.error("reasoningCache.persist.error", { error: e instanceof Error ? e.message : String(e) });
+		}
+	}
+
+	/**
 	 * Per-turn accumulator of reasoning text. Reasoning is streamed to the UI in
 	 * 100ms-buffered chunks that are contiguous fragments of one continuous trace,
 	 * so we must concatenate each chunk verbatim (no separators) rather than
@@ -169,6 +266,8 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		if (text && this._currentTurnKey) {
 			this._turnReasoning += text;
 			CommonApi._reasoningByTurn.set(this.reasoningKey(this._currentTurnKey), this._turnReasoning);
+			// Write-through to globalState (debounced) so replay survives reload.
+			CommonApi.schedulePersist();
 		}
 	}
 
@@ -188,8 +287,18 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected getCachedReasoning(turnKey?: string): string | undefined {
 		const key = turnKey ?? this._currentTurnKey;
-		const cached = key ? CommonApi._reasoningByTurn.get(this.reasoningKey(key)) : undefined;
-		return cached ? cached.trim() : undefined;
+		if (!key) {
+			return undefined;
+		}
+		const fullKey = this.reasoningKey(key);
+		const cached = CommonApi._reasoningByTurn.get(fullKey);
+		if (cached === undefined) {
+			return undefined;
+		}
+		// LRU: refresh recency by moving the entry to the most-recent end.
+		CommonApi._reasoningByTurn.delete(fullKey);
+		CommonApi._reasoningByTurn.set(fullKey, cached);
+		return cached.trim();
 	}
 
 	/** System prompts to include in requests. */
@@ -373,6 +482,8 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			clearTimeout(this._thinkingFlushTimer);
 			this._thinkingFlushTimer = null;
 		}
+		// Best-effort immediate persist so the last thought isn't lost on reload.
+		void CommonApi.flushNow();
 	}
 
 	/**

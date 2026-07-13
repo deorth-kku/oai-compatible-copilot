@@ -7,6 +7,7 @@ import { logger } from "./logger";
 import { normalizeUserModels } from "./utils";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
+import { CommonApi } from "./commonApi";
 
 export function activate(context: vscode.ExtensionContext) {
 	// Initialize logger
@@ -16,7 +17,9 @@ export function activate(context: vscode.ExtensionContext) {
 	TokenizerManager.initialize(context.extensionPath);
 
 	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
-	const provider = new HuggingFaceChatModelProvider(context.secrets, tokenCountStatusBarItem);
+	const provider = new HuggingFaceChatModelProvider(context.secrets, tokenCountStatusBarItem, context.globalState);
+	// Hydrate the persisted reasoning cache into memory before any request can run.
+	CommonApi.hydrate();
 	// Register the Hugging Face provider under the vendor id used in package.json
 	vscode.lm.registerLanguageModelChatProvider("oaicopilot", provider);
 
@@ -127,4 +130,6 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 }
 
-export function deactivate() {}
+export function deactivate() {
+	void CommonApi.flushNow();
+}
