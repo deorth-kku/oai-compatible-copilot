@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "../types";
+import type { HFModelItem, ModelConversionConfig } from "../types";
 import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 import type { OpenAIToolCall } from "./openaiTypes";
 
@@ -16,6 +16,7 @@ import {
 	createDataUrl,
 	isToolResultPart,
 	collectToolResultText,
+	extractToolResultMedia,
 	convertToolsToOpenAIResponses,
 	mapRole,
 } from "../utils";
@@ -81,7 +82,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean },
+		modelConfig: ModelConversionConfig,
 		startIndex?: number
 	): ResponsesInputItem[] {
 		const base = startIndex ?? 0;
@@ -94,7 +95,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
 			const toolCalls: OpenAIToolCall[] = [];
-			const toolResults: { callId: string; content: string }[] = [];
+			const toolResults: { callId: string; content: string; images: vscode.LanguageModelDataPart[] }[] = [];
 			const thinkingParts: string[] = [];
 
 			for (const part of m.content ?? []) {
@@ -113,8 +114,8 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					toolCalls.push({ id, type: "function", function: { name: part.name, arguments: args } });
 				} else if (isToolResultPart(part)) {
 					const callId = (part as { callId?: string }).callId ?? "";
-					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
-					toolResults.push({ callId, content });
+					const { text, images } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
+					toolResults.push({ callId, content: text, images });
 				} else if (part instanceof vscode.LanguageModelThinkingPart && modelConfig.includeReasoningInRequest) {
 					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
 					thinkingParts.push(content);
@@ -184,6 +185,24 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					id: `fco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 					status: "completed",
 				});
+				// The Responses API only allows images inside `user`/`assistant`
+				// content; a tool result's images are forwarded as a separate user
+				// message when the model supports vision.
+				if (tr.images.length > 0 && modelConfig.vision) {
+					const contentArray: ResponsesContentPart[] = [
+						{ type: "input_text", text: `[tool result images for call_id=${tr.callId}]` },
+					];
+					for (const imagePart of tr.images) {
+						contentArray.push({ type: "input_image", image_url: createDataUrl(imagePart), detail: "auto" });
+					}
+					out.push({
+						role: "user",
+						content: contentArray,
+						type: "message",
+						id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+						status: "completed",
+					});
+				}
 			}
 
 			// user message

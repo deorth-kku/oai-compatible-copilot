@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "../types";
+import type { HFModelItem, ModelConversionConfig } from "../types";
 import type { OpenAIFunctionToolDef } from "../openai/openaiTypes";
 
 import { CommonApi } from "../commonApi";
@@ -17,6 +17,7 @@ import {
 	isImageMimeType,
 	isToolResultPart,
 	collectToolResultText,
+	extractToolResultMedia,
 	convertToolsToOpenAI,
 	mapRole,
 	tryParseJSONObject,
@@ -496,16 +497,17 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		_modelConfig: { includeReasoningInRequest: boolean }
+		_modelConfig: ModelConversionConfig
 	): GeminiChatMessage[] {
 		const out: GeminiChatMessage[] = [];
 		const toolNameByCallId = new Map<string, string>();
+		const supportsVision = _modelConfig.vision ?? false;
 
 		const extractMessageParts = (m: LanguageModelChatRequestMessage) => {
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
 			const toolCalls: Array<{ callId: string; name: string; args: Record<string, unknown> }> = [];
-			const toolResults: Array<{ callId: string; outputText: string }> = [];
+			const toolResults: Array<{ callId: string; outputText: string; images: vscode.LanguageModelDataPart[] }> = [];
 
 			for (const part of m.content ?? []) {
 				if (part instanceof vscode.LanguageModelTextPart) {
@@ -518,8 +520,8 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 					toolCalls.push({ callId, name: part.name, args });
 				} else if (isToolResultPart(part)) {
 					const callId = (part as { callId?: string }).callId ?? "";
-					const outputText = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
-					toolResults.push({ callId, outputText });
+					const { text, images } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
+					toolResults.push({ callId, outputText: text, images });
 				}
 			}
 
@@ -577,6 +579,22 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 						const part = toolResultToFunctionResponsePart(tr.callId, tr.outputText);
 						if (part) {
 							respParts.push(part);
+						}
+						// Gemini tool results (functionResponse) are JSON-only; forward
+						// the result's images as a separate user message when vision is
+						// supported, instead of dumping base64 into the text output.
+						if (tr.images.length > 0 && supportsVision) {
+							respParts.push({
+								text: `[tool result images for call_id=${tr.callId}]`,
+							});
+							for (const img of tr.images) {
+								respParts.push({
+									inlineData: {
+										mimeType: img.mimeType,
+										data: Buffer.from(img.data).toString("base64"),
+									},
+								});
+							}
 						}
 					}
 					j++;

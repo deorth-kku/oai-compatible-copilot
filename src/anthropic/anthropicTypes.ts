@@ -49,7 +49,7 @@ export interface AnthropicToolUseBlock {
 export interface AnthropicToolResultBlock {
 	type: "tool_result";
 	tool_use_id: string;
-	content: string | AnthropicTextBlock[];
+	content: string | AnthropicContentBlock[];
 	is_error?: boolean;
 	cache_control?: AnthropicCacheControl;
 }

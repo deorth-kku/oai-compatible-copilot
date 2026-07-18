@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "../types";
+import type { HFModelItem, ModelConversionConfig } from "../types";
 
 import type {
 	AnthropicMessage,
@@ -20,7 +20,7 @@ import type {
 	AnthropicStreamChunk,
 } from "./anthropicTypes";
 
-import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole } from "../utils";
+import { isImageMimeType, isToolResultPart, extractToolResultMedia, convertToolsToOpenAI, mapRole } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
@@ -72,7 +72,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean }
+		modelConfig: ModelConversionConfig
 	): AnthropicMessage[] {
 		const out: AnthropicMessage[] = [];
 
@@ -116,7 +116,24 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 					collectedParts++;
 				} else if (isToolResultPart(part)) {
 					const callId = (part as { callId?: string }).callId ?? "";
-					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
+					const { text, images } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
+					// Anthropic supports multimodal tool results. When the result
+					// contains images, emit a content-block array (text + image)
+					// instead of a plain string, so the base64 is sent as image
+					// data rather than as an inline JSON string.
+					const content: AnthropicToolResultBlock["content"] = images.length > 0
+						? [
+								...(text ? [{ type: "text" as const, text }] : []),
+								...images.map((img) => ({
+									type: "image" as const,
+									source: {
+										type: "base64" as const,
+										media_type: img.mimeType,
+										data: Buffer.from(img.data).toString("base64"),
+									},
+								})),
+						  ]
+						: text;
 					toolResults.push({
 						type: "tool_result",
 						tool_use_id: callId,

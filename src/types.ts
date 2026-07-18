@@ -10,6 +10,16 @@ export interface HFProvider {
 }
 
 /**
+ * Configuration passed to message conversion that may affect how messages are
+ * serialized for a given provider (e.g. whether to round-trip reasoning, or
+ * whether the target model supports vision and thus can receive inline images).
+ */
+export interface ModelConversionConfig {
+	includeReasoningInRequest: boolean;
+	vision?: boolean;
+}
+
+/**
  * A model entry returned by the Hugging Face router models endpoint.
  */
 export interface HFArchitecture {

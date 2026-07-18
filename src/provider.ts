@@ -9,7 +9,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "./types";
+import type { HFModelItem, ModelConversionConfig } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
@@ -149,8 +149,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			});
 
 			// Prepare model configuration
-			const modelConfig = {
+			const modelConfig: ModelConversionConfig = {
 				includeReasoningInRequest: um?.include_reasoning_in_request ?? false,
+				vision: um?.vision ?? false,
 			};
 
 			// Update Token Usage

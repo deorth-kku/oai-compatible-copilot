@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem, ReasoningConfig, TokenUsage } from "../types";
+import type { HFModelItem, ReasoningConfig, TokenUsage, ModelConversionConfig } from "../types";
 import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 
 import type {
@@ -24,6 +24,7 @@ import {
 	createDataUrl,
 	isToolResultPart,
 	collectToolResultText,
+	extractToolResultMedia,
 	convertToolsToOpenAI,
 	mapRole,
 } from "../utils";
@@ -44,7 +45,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean },
+		modelConfig: ModelConversionConfig,
 		startIndex?: number
 	): OpenAIChatMessage[] {
 		const base = startIndex ?? 0;
@@ -56,7 +57,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
 			const toolCalls: OpenAIToolCall[] = [];
-			const toolResults: { callId: string; content: string }[] = [];
+			const toolResults: { callId: string; content: string; images: vscode.LanguageModelDataPart[] }[] = [];
 			const reasoningParts: string[] = [];
 
 			for (const part of m.content ?? []) {
@@ -75,8 +76,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 					toolCalls.push({ id, type: "function", function: { name: part.name, arguments: args } });
 				} else if (isToolResultPart(part)) {
 					const callId = (part as { callId?: string }).callId ?? "";
-					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
-					toolResults.push({ callId, content });
+					const { text, images } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
+					toolResults.push({ callId, content: text, images });
 				} else if (part instanceof vscode.LanguageModelThinkingPart) {
 					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
 					reasoningParts.push(content);
@@ -127,6 +128,25 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			// process tool result messages
 			for (const tr of toolResults) {
 				out.push({ role: "tool", tool_call_id: tr.callId, content: tr.content || "" });
+				// OpenAI chat completions only allow images in `user` role messages,
+				// so a tool result's images are forwarded as a separate `user` message
+				// when the model supports vision. Without this, the base64 would have
+				// been dumped into the tool result text content.
+				if (tr.images.length > 0 && modelConfig.vision) {
+					const contentArray: ChatMessageContent[] = [
+						{
+							type: "text",
+							text: `[tool result images for tool_call_id=${tr.callId}]`,
+						},
+					];
+					for (const imagePart of tr.images) {
+						contentArray.push({
+							type: "image_url",
+							image_url: { url: createDataUrl(imagePart) },
+						});
+					}
+					out.push({ role: "user", content: contentArray });
+				}
 			}
 
 			// process user messages

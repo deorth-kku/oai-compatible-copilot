@@ -211,27 +211,51 @@ export function isToolResultPart(value: unknown): value is { callId: string; con
 }
 
 /**
- * Concatenate tool result content into a single text string.
+ * Separate a tool result's content into plain text and image data parts.
+ *
+ * Image {@link vscode.LanguageModelDataPart}s are returned separately (instead of
+ * being serialized as base64 JSON) so that providers which support multimodal tool
+ * results (e.g. Anthropic) can embed them correctly, while text-only providers
+ * (OpenAI chat completions, Responses, Gemini, Ollama) can ignore them gracefully
+ * instead of dumping a giant base64 blob into the content string.
+ *
  * @param pr Tool result-like object with content array.
  */
-export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string {
+export function extractToolResultMedia(pr: { content?: ReadonlyArray<unknown> }): {
+	text: string;
+	images: vscode.LanguageModelDataPart[];
+} {
 	let text = "";
+	const images: vscode.LanguageModelDataPart[] = [];
 	for (const c of pr.content ?? []) {
 		if (c instanceof vscode.LanguageModelTextPart) {
 			text += c.value;
 		} else if (typeof c === "string") {
 			text += c;
+		} else if (c instanceof vscode.LanguageModelDataPart && isImageMimeType(c.mimeType)) {
+			images.push(c);
 		} else if (c instanceof vscode.LanguageModelDataPart && c.mimeType === "cache_control") {
 			/* ignore */
-		} else {
+		} else if (c instanceof vscode.LanguageModelDataPart) {
+			// Non-image data parts (e.g. json/text) are serialized as text.
 			try {
 				text += JSON.stringify(c);
 			} catch {
 				/* ignore */
 			}
 		}
+		// Unknown part types are ignored.
 	}
-	return text;
+	return { text, images };
+}
+
+/**
+ * Concatenate tool result content into a single text string, ignoring any image
+ * data parts (those are handled separately via {@link extractToolResultMedia}).
+ * @param pr Tool result-like object with content array.
+ */
+export function collectToolResultText(pr: { content?: ReadonlyArray<unknown> }): string {
+	return extractToolResultMedia(pr).text;
 }
 
 /**

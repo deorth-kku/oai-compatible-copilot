@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { tokenizerManager } from "./tokenizer/tokenizerManager";
 import { getImageDimensions } from "./tokenizer/imageUtils";
-import { createDataUrl } from "./utils";
+import { createDataUrl, extractToolResultMedia } from "./utils";
 
 /*
  * Each message comes with 3 tokens per message due to special characters
@@ -42,8 +42,10 @@ export async function countMessageTokens(
 				totalTokens += BaseTokensPerName;
 				totalTokens += await textTokenLength(JSON.stringify(part.input));
 			} else if (part instanceof vscode.LanguageModelToolResultPart) {
-				// Tool result token calculation
-				totalTokens += await textTokenLength(JSON.stringify(part.content));
+				// Tool result token calculation (only text content; image parts are
+				// tokenized separately via vision cost, not as base64 text).
+				const { text } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
+				totalTokens += await textTokenLength(text);
 			} else if (part instanceof vscode.LanguageModelThinkingPart) {
 				// Thinking Token
 				if (modelConfig.includeReasoningInRequest) {

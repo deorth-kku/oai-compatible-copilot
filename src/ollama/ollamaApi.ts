@@ -7,11 +7,11 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "../types";
+import type { HFModelItem, ModelConversionConfig } from "../types";
 
 import type { OllamaMessage, OllamaRequestBody, OllamaStreamChunk, OllamaToolCall } from "./ollamaTypes";
 
-import { isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole } from "../utils";
+import { isToolResultPart, collectToolResultText, extractToolResultMedia, convertToolsToOpenAI, mapRole } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
@@ -28,7 +28,7 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		_modelConfig: { includeReasoningInRequest: boolean }
+		_modelConfig: ModelConversionConfig
 	): OllamaMessage[] {
 		const out: OllamaMessage[] = [];
 
@@ -38,7 +38,7 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 			const imageParts: string[] = [];
 			let thinkingContent = "";
 			const toolCalls: OllamaToolCall[] = [];
-			const toolResults: { toolName: string; content: string }[] = [];
+			const toolResults: { toolName: string; content: string; images: string[] }[] = [];
 
 			for (const part of m.content ?? []) {
 				if (part instanceof vscode.LanguageModelTextPart) {
@@ -63,9 +63,13 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 					});
 				} else if (isToolResultPart(part)) {
 					// Capture tool results
-					const content = collectToolResultText(part);
+					const { text, images } = extractToolResultMedia(part);
 					const toolName = (part as { toolName?: string }).toolName ?? "unknown";
-					toolResults.push({ toolName, content });
+					toolResults.push({
+						toolName,
+						content: text,
+						images: images.map((img) => Buffer.from(img.data).toString("base64")),
+					});
 				}
 			}
 
@@ -76,6 +80,15 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 					content: tr.content,
 					tool_name: tr.toolName,
 				});
+				// Ollama "tool" role messages carry text only; forward a tool result's
+				// images as a separate user message when the model supports vision.
+				if (tr.images.length > 0 && (_modelConfig.vision ?? false)) {
+					out.push({
+						role: "user",
+						content: `[tool result images for ${tr.toolName}]`,
+						images: tr.images,
+					});
+				}
 			}
 
 			// Handle regular messages
