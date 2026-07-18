@@ -114,6 +114,14 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			},
 		};
 		const requestStartTime = Date.now();
+		// Abort the underlying HTTP request when the user cancels (e.g. clicks
+		// "Stop" in Copilot Chat). Without this, the connection stays open and
+		// the remote server keeps generating tokens even after the client has
+		// stopped consuming the stream.
+		const abortController = new AbortController();
+		const _cancelSubscription = token.onCancellationRequested(() => {
+			abortController.abort();
+		});
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
@@ -230,6 +238,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const response = await executeWithRetry(async () => {
 					const res = await fetch(url, {
 						method: "POST",
+						signal: abortController.signal,
 						headers: requestHeaders,
 						body: JSON.stringify(ollamaRequestBody),
 					});
@@ -273,6 +282,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const response = await executeWithRetry(async () => {
 					const res = await fetch(url, {
 						method: "POST",
+						signal: abortController.signal,
 						headers: requestHeaders,
 						body: JSON.stringify(requestBody),
 					});
@@ -357,8 +367,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
 						const res = await fetch(url, {
-							method: "POST",
-							headers: requestHeaders,
+							method: "POST",								signal: abortController.signal,							headers: requestHeaders,
 							body: JSON.stringify(body),
 						});
 
@@ -452,6 +461,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const response = await executeWithRetry(async () => {
 					const res = await fetch(url, {
 						method: "POST",
+						signal: abortController.signal,
 						headers: requestHeaders,
 						body: JSON.stringify(requestBody),
 					});
@@ -499,6 +509,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const response = await executeWithRetry(async () => {
 					const res = await fetch(url, {
 						method: "POST",
+						signal: abortController.signal,
 						headers: requestHeaders,
 						body: JSON.stringify(requestBody),
 					});
@@ -533,6 +544,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			});
 			throw err;
 		} finally {
+			// Ensure the request is fully torn down (idempotent) so a cancelled
+			// request does not linger and keep the server generating tokens.
+			abortController.abort();
+			_cancelSubscription.dispose();
 			const durationMs = Date.now() - requestStartTime;
 			logger.info("request.end", { modelId: model.id, durationMs });
 			// Update last request time after successful completion

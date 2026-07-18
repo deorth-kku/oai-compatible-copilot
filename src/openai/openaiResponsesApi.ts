@@ -392,6 +392,12 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			}
 			logger.debug("responses.stream.done", { modelId, responseId: this._responseId ?? "" });
 		} catch (e) {
+			// If the request was aborted (user clicked Stop), swallow the error so
+			// it isn't surfaced as a failed request; cancellation is expected.
+			if (token.isCancellationRequested || (e instanceof Error && e.name === "AbortError")) {
+				logger.debug("responses.stream.aborted", { modelId });
+				return;
+			}
 			console.error("[OpenAI-Responses Provider] Streaming response error:", e);
 			logger.error("responses.stream.error", { modelId, error: e instanceof Error ? e.message : String(e) });
 			throw e;

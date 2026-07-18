@@ -1035,6 +1035,12 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 			}
 			logger.debug("gemini.stream.done", { modelId });
 		} catch (e) {
+			// If the request was aborted (user clicked Stop), swallow the error so
+			// it isn't surfaced as a failed request; cancellation is expected.
+			if (token.isCancellationRequested || (e instanceof Error && e.name === "AbortError")) {
+				logger.debug("gemini.stream.aborted", { modelId });
+				return;
+			}
 			console.error("[Gemini Provider] Streaming response error:", e);
 			logger.error("gemini.stream.error", { modelId, error: e instanceof Error ? e.message : String(e) });
 			throw e;

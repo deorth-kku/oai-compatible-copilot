@@ -330,7 +330,15 @@ export async function executeWithRetry<T>(fn: () => Promise<T>, retryConfig: Ret
 			const isRetryableNetworkError = networkErrorPatterns.some((pattern) => lastError?.message.includes(pattern));
 			const isRetryableError = isRetryableStatusError || isRetryableNetworkError;
 
-			if (!isRetryableError || attempt === maxAttempts) {
+			// A cancellation/abort must never be retried. An aborted `fetch` may
+			// surface as a `TypeError: fetch failed` (whose message matches the
+			// network-error retry patterns) or as an `AbortError`, so detect both
+			// explicitly and bail out immediately.
+			const isAbortError =
+				lastError?.name === "AbortError" ||
+				/abort(ed)?/i.test(lastError?.message ?? "");
+
+			if (!isRetryableError || attempt === maxAttempts || isAbortError) {
 				throw lastError;
 			}
 

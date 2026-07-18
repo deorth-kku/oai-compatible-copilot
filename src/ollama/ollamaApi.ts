@@ -239,6 +239,12 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 			}
 			logger.debug("ollama.stream.done", { modelId });
 		} catch (e) {
+			// If the request was aborted (user clicked Stop), swallow the error so
+			// it isn't surfaced as a failed request; cancellation is expected.
+			if (token.isCancellationRequested || (e instanceof Error && e.name === "AbortError")) {
+				logger.debug("ollama.stream.aborted", { modelId });
+				return;
+			}
 			console.error("[Ollama Provider] Streaming response error:", e);
 			logger.error("ollama.stream.error", { modelId, error: e instanceof Error ? e.message : String(e) });
 			throw e;

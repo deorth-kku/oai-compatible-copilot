@@ -487,6 +487,12 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 			logger.debug("anthropic.stream.done", { modelId });
 		} catch (e) {
+			// If the request was aborted (user clicked Stop), swallow the error so
+			// it isn't surfaced as a failed request; cancellation is expected.
+			if (token.isCancellationRequested || (e instanceof Error && e.name === "AbortError")) {
+				logger.debug("anthropic.stream.aborted", { modelId });
+				return;
+			}
 			console.error("[Anthropic Provider] Streaming response error:", e);
 			logger.error("anthropic.stream.error", { modelId, error: e instanceof Error ? e.message : String(e) });
 			throw e;
