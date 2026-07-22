@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import {
 	CancellationToken,
 	LanguageModelChatInformation,
+	LanguageModelChatMessageRole,
 	LanguageModelChatProvider,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
@@ -27,6 +28,113 @@ import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } fro
 import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
+
+/**
+ * Workaround for KV cache recalculation caused by the LLM reading the
+ * task_complete instruction from the system prompt.
+ *
+ * Strategy:
+ * 1. Extract the task_complete instruction text from the first system message
+ *    and remove it.
+ * 2. If the last message is a user message, inject the instruction into it.
+ *    The instruction is only injected when the last message is role:user,
+ *    and only if that user message already has text content (to avoid
+ *    injecting into an empty message).
+ */
+function applyTaskCompleteWorkaround(messages: readonly LanguageModelChatRequestMessage[]): LanguageModelChatRequestMessage[] {
+	enum SystemRole {
+		System = 3,
+	}
+
+	// The exact task_complete instruction text from the system prompt
+	const TASK_COMPLETE_INSTRUCTION = `When you have fully completed the task, call the task_complete tool to signal that you are done.
+IMPORTANT: Before calling task_complete, you MUST provide a brief text summary of what was accomplished in your message. The task is not complete until both the summary and the task_complete call are present.
+`;
+
+	// Find the first system message and extract the task_complete instruction.
+	let taskCompleteText = "";
+	let firstSystemIdx = -1;
+	for (let i = 0; i < messages.length; i++) {
+		const m = messages[i];
+		if ((m.role as unknown as number) !== SystemRole.System) {
+			continue;
+		}
+		if (!m.content) {
+			continue;
+		}
+		firstSystemIdx = i;
+		const content = m.content as readonly unknown[];
+		for (const part of content) {
+			if (!(part instanceof vscode.LanguageModelTextPart)) {
+				continue;
+			}
+			const text = part.value;
+			const idx = text.indexOf(TASK_COMPLETE_INSTRUCTION);
+			if (idx !== -1) {
+				taskCompleteText = TASK_COMPLETE_INSTRUCTION;
+				break;
+			}
+		}
+		if (taskCompleteText) {
+			break;
+		}
+	}
+
+	if (!taskCompleteText) {
+		return messages.map((m) => ({ ...m, content: m.content }));
+	}
+
+	// Build a mutable copy of messages.
+	const result = messages.map((m) => ({ ...m, content: m.content }));
+
+	// Remove the task_complete instruction from the first system message.
+	if (firstSystemIdx >= 0) {
+		const m = result[firstSystemIdx];
+		if (m.content) {
+			const content = m.content as readonly unknown[];
+			m.content = content.map((part) => {
+				if (part instanceof vscode.LanguageModelTextPart) {
+					return new vscode.LanguageModelTextPart(part.value.replace(taskCompleteText, ""));
+				}
+				return part;
+			});
+		}
+	}
+
+	// Inject into the last user message (only if last message is role:user
+	// and it already has text content). Insert before </reminderInstructions> tag
+	// if present; otherwise append at the end.
+	const lastMsg = result[result.length - 1];
+	if (lastMsg && lastMsg.role == vscode.LanguageModelChatMessageRole.User && lastMsg.content) {
+		const content = lastMsg.content as readonly unknown[];
+		const hasText = content.some((p) => p instanceof vscode.LanguageModelTextPart && p.value.trim().length > 0);
+		if (hasText) {
+			// Try to find </reminderInstructions> in text parts and inject before it.
+			let injected = false;
+			const newContent = content.map((part) => {
+				if (injected || !(part instanceof vscode.LanguageModelTextPart)) {
+					return part;
+				}
+				const text = part.value;
+				const tagIdx = text.indexOf("</reminderInstructions>");
+				if (tagIdx !== -1) {
+					injected = true;
+					const before = text.slice(0, tagIdx);
+					const after = text.slice(tagIdx);
+					return new vscode.LanguageModelTextPart(before + "\n\n" + taskCompleteText + "\n" + after);
+				}
+				return part;
+			});
+			if (!injected) {
+				// Fallback: append at the end as a new text part.
+				newContent.push(new vscode.LanguageModelTextPart("\n\n" + taskCompleteText));
+			}
+			lastMsg.content = newContent;
+		}
+	}
+
+	return result;
+}
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -217,10 +325,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			logger.debug("request.messages.origin", {
 				messages: messages,
 			});
+
+			// Workaround: strip task_complete instruction from first system prompt
+			// and inject into last user message to avoid KV cache recalculation.
+			const workaroundedMessages = applyTaskCompleteWorkaround(messages);
+
 			if (apiMode === "ollama") {
 				// Ollama native API mode
 				const ollamaApi = new OllamaApi(model.id);
-				const ollamaMessages = ollamaApi.convertMessages(messages, modelConfig);
+				const ollamaMessages = ollamaApi.convertMessages(workaroundedMessages, modelConfig);
 
 				let ollamaRequestBody: OllamaRequestBody = {
 					model: parsedModelId.baseId,
@@ -261,7 +374,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
 				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
-				const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
+				const anthropicMessages = anthropicApi.convertMessages(workaroundedMessages, modelConfig);
 
 				// requestBody
 				let requestBody: AnthropicRequestBody = {
@@ -317,7 +430,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				openaiResponsesApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
 
 				// Convert full history once (also extracts system `instructions`).
-				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
+				const fullInput = openaiResponsesApi.convertMessages(workaroundedMessages, modelConfig);
 
 				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
 				let deltaInput: unknown[] | null = null;
@@ -422,7 +535,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
 				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
-				const geminiMessages = geminiApi.convertMessages(messages, modelConfig);
+				const geminiMessages = geminiApi.convertMessages(workaroundedMessages, modelConfig);
 
 				const systemParts: string[] = [];
 				const contents: GeminiGenerateContentRequest["contents"] = [];
@@ -492,7 +605,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).
 				openaiApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
-				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
+				const openaiMessages = openaiApi.convertMessages(workaroundedMessages, modelConfig);
 
 				// requestBody
 				let requestBody: Record<string, unknown> = {
