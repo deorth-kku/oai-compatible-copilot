@@ -135,6 +135,16 @@ suite("modelConfiguration", () => {
 		assert.deepStrictEqual(requestBody.reasoning, { effort: "max" });
 	});
 
+	test("applies output_config.effort to Anthropic requests when configured", () => {
+		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(
+			{ model: "claude", messages: [], max_tokens: 1024, stream: true },
+			{ ...deepSeekModel, apiMode: "anthropic", reasoning_effort: "high" },
+			undefined
+		) as unknown as Record<string, unknown>;
+
+		assert.deepStrictEqual(anthropicBody.output_config, { effort: "high" });
+	});
+
 	test("keeps the picker out of unsupported native API request bodies", () => {
 		const options = { modelConfiguration: { reasoningEffort: "high" } } as never;
 		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(

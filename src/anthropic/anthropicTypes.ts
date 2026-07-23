@@ -84,6 +84,9 @@ export interface AnthropicRequestBody {
 		type: "enabled";
 		budget_tokens: number;
 	};
+	output_config?: {
+		effort?: "low" | "medium" | "high" | "xhigh" | "max";
+	};
 	tools?: AnthropicToolDefinition[];
 	tool_choice?: AnthropicToolChoice;
 }
