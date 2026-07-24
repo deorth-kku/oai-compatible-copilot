@@ -143,6 +143,17 @@ suite("modelConfiguration", () => {
 		) as unknown as Record<string, unknown>;
 
 		assert.deepStrictEqual(anthropicBody.output_config, { effort: "high" });
+		assert.deepStrictEqual(anthropicBody.thinking, { type: "adaptive" });
+	});
+
+	test("uses manual extended thinking when enable_thinking + thinking_budget are set", () => {
+		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(
+			{ model: "claude", messages: [], max_tokens: 1024, stream: true },
+			{ ...deepSeekModel, apiMode: "anthropic", enable_thinking: true, thinking_budget: 16000 },
+			undefined
+		) as unknown as Record<string, unknown>;
+
+		assert.deepStrictEqual(anthropicBody.thinking, { type: "enabled", budget_tokens: 16000 });
 	});
 
 	test("keeps the picker out of unsupported native API request bodies", () => {

@@ -279,6 +279,10 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		// Add output_config.effort (Anthropic adaptive thinking effort, from reasoning_effort)
 		if (um?.reasoning_effort !== undefined && um.reasoning_effort !== null) {
 			rb.output_config = { effort: um.reasoning_effort as "low" | "medium" | "high" | "xhigh" | "max" };
+			rb.thinking = { type: "adaptive" };
+		} else if (um?.enable_thinking && um?.thinking_budget !== undefined && um.thinking_budget !== null) {
+			// Manual extended thinking with budget (legacy mode)
+			rb.thinking = { type: "enabled", budget_tokens: um.thinking_budget };
 		}
 
 		// Add tools configuration
