@@ -795,6 +795,11 @@ function populateModelIdDropdown(models) {
 		// Add click event
 		option.addEventListener("click", () => {
 			modelIdInput.value = model.id;
+			// Auto-fill Context Length from llama.cpp meta.n_ctx (no-op if absent)
+			const nCtx = model.meta && model.meta.n_ctx;
+			if (typeof nCtx === "number" && Number.isFinite(nCtx) && nCtx > 0) {
+				modelContextLengthInput.value = String(nCtx);
+			}
 			hideDropdown();
 
 			// Remove selection from all options

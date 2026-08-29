@@ -27,6 +27,22 @@ export interface HFArchitecture {
 	output_modalities?: string[];
 }
 
+/**
+ * Optional metadata returned by some /v1/models implementations
+ * (e.g. llama.cpp). `n_ctx` is the model's context length.
+ */
+export interface HFModelMeta {
+	vocab_type?: number;
+	n_vocab?: number;
+	n_ctx?: number;
+	n_ctx_train?: number;
+	n_embd?: number;
+	n_params?: number;
+	size?: number;
+	ftype?: string;
+	[key: string]: unknown;
+}
+
 export interface HFModelItem {
 	id: string;
 	object?: string;
@@ -38,6 +54,8 @@ export interface HFModelItem {
 	providers?: HFProvider[];
 	architecture?: HFArchitecture;
 	context_length?: number;
+	// llama.cpp /v1/models metadata (e.g. n_ctx context length)
+	meta?: HFModelMeta;
 	vision?: boolean;
 	max_tokens?: number;
 	// OpenAI new standard parameter
