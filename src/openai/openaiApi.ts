@@ -102,8 +102,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 					// full trace. Copilot Chat may round-trip only a fragment of the
 					// previous turn's thinking into history (e.g. "."), so the cached
 					// full trace is often more complete. Key by this item's absolute
-					// conversation index so each turn keeps its own reasoning.
-					const turnKey = `${this._modelId}#${absIndex}`;
+					// conversation index (model-agnostic) so each turn keeps its own
+					// reasoning even after switching models.
+					const turnKey = String(absIndex);
 					const cached = this.getCachedReasoning(turnKey);
 					const reasoning =
 						joinedThinking && cached

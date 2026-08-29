@@ -314,7 +314,8 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				openaiResponsesApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// in the full history (append-only), so it matches the replay key.
-				openaiResponsesApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
+				// Model-agnostic so switching models mid-session keeps replaying reasoning.
+				openaiResponsesApi.setCurrentTurnKey(String(messages.length));
 
 				// Convert full history once (also extracts system `instructions`).
 				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
@@ -491,7 +492,8 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				openaiApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).
-				openaiApi.setCurrentTurnKey(`${model.id}#${messages.length}`);
+				// Model-agnostic so switching models mid-session keeps replaying reasoning.
+				openaiApi.setCurrentTurnKey(String(messages.length));
 				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
 
 				// requestBody

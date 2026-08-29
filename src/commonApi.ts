@@ -56,12 +56,18 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * cannot find a `LanguageModelThinkingPart` for an assistant turn, we replay
 	 * the cached real reasoning instead of fabricating a placeholder.
 	 *
-	 * Keyed by `${convId}#${modelId}#${index}` where `index` is the absolute
-	 * position the assistant response occupies in the (append-only) conversation
-	 * and `convId` is a per-conversation id round-tripped via a data-part marker.
+	 * Keyed by `${convId}#${index}` where `index` is the absolute position the
+	 * assistant response occupies in the (append-only) conversation and `convId`
+	 * is a per-conversation id derived from the request history (see `computeConvId`).
+	 * The key is intentionally model-agnostic so that switching models mid-session
+	 * keeps replaying the same turn's reasoning instead of dropping it.
+	 *
+	 * Pre-release caches were keyed `${convId}#${modelId}#${index}`; `hydrate`
+	 * rewrites those persisted keys on load by dropping the model segment.
+	 *
 	 * The `convId` is what stops reasoning from one chat session leaking into
-	 * another ("串台"): without it, two unrelated sessions with the same model and
-	 * the same message count would share a cache key.
+	 * another ("串台"): without it, two unrelated sessions with the same message
+	 * count would share a cache key.
 	 */
 	private static readonly _reasoningByTurn: Map<string, string> = new Map<string, string>();
 
@@ -83,6 +89,28 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		CommonApi._memento = memento;
 	}
 
+	/**
+	 * Normalize a persisted cache key to the current on-disk format.
+	 *
+	 * Before this change the cache was keyed `${convId}#${modelId}#${index}`; it
+	 * is now `${convId}#${index}` so switching models mid-conversation keeps
+	 * replaying the same turn's reasoning instead of dropping it. Keys persisted
+	 * by older versions still contain the model segment, so here we strip it: a
+	 * key with three or more `#`-separated parts (convId, modelId, …, index) is
+	 * rewritten to two parts (convId, index). Keys already in the new two-part
+	 * form are returned unchanged. Because `convId` is a base-36 hash (no `#`) and
+	 * the index is numeric, an old key always has ≥3 parts while a new key always
+	 * has exactly 2, so the two formats never collide.
+	 */
+	private static migrateCacheKey(key: string): string {
+		const parts = key.split("#");
+		if (parts.length >= 3) {
+			// convId#modelId[..#...]*#index → convId#index
+			return `${parts[0]}#${parts[parts.length - 1]}`;
+		}
+		return key;
+	}
+
 	/** Load any persisted cache from storage into the in-memory Map. Call at activate(). */
 	static hydrate(): void {
 		if (!CommonApi._memento) {
@@ -93,7 +121,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			if (stored && typeof stored === "object") {
 				for (const [k, v] of Object.entries(stored)) {
 					if (typeof k === "string" && typeof v === "string") {
-						CommonApi._reasoningByTurn.set(k, v);
+						CommonApi._reasoningByTurn.set(CommonApi.migrateCacheKey(k), v);
 					}
 				}
 			}
