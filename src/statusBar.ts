@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { countMessageTokens, countToolTokens } from "./provideToken";
+import type { TokenUsage } from "./types";
 
 export function initStatusBar(context: vscode.ExtensionContext): vscode.StatusBarItem {
 	// Create status bar item for token count display
@@ -86,7 +87,16 @@ ${progressBar}\n
   - Tools: ${formatTokenCount(toolTokens)}  (${Math.min((toolTokens / maxTokens) * 100, 100).toFixed(1)}%) \n
 Click to Open Configuration UI`;
 
-	// Add color coding based on token usage
+	applyUsageColoring(statusBarItem, totalTokenCount, maxTokens);
+
+	statusBarItem.show();
+}
+
+/**
+ * Color the status bar item based on token usage percentage
+ * (red at >= 90%, yellow at >= 70%, otherwise no background).
+ */
+function applyUsageColoring(statusBarItem: vscode.StatusBarItem, totalTokenCount: number, maxTokens: number): void {
 	const usagePercentage = (totalTokenCount / maxTokens) * 100;
 	if (usagePercentage >= 90) {
 		statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
@@ -95,6 +105,34 @@ Click to Open Configuration UI`;
 	} else {
 		statusBarItem.backgroundColor = undefined;
 	}
+}
+
+/**
+ * Update the status bar from the server-reported token usage of a finished
+ * request (the `usage` of the final response chunk). Unlike
+ * {@link updateContextStatusBar}, nothing is counted locally, so the number
+ * already includes the just-generated assistant reply.
+ * @param usage Server-reported token usage from the final response chunk
+ * @param model The language model information (context window size)
+ * @param statusBarItem The status bar item to update
+ */
+export function updateContextStatusBarFromUsage(
+	usage: TokenUsage,
+	model: LanguageModelChatInformation,
+	statusBarItem: vscode.StatusBarItem
+): void {
+	const totalTokenCount = usage.total_tokens;
+	const maxTokens = model.maxInputTokens + model.maxOutputTokens;
+
+	const progressBar = createProgressBar(totalTokenCount, maxTokens);
+	statusBarItem.text = `$(symbol-parameter) ${progressBar}`;
+	statusBarItem.tooltip = `Token Usage: ${formatTokenCount(totalTokenCount)} / ${formatTokenCount(maxTokens)}\n
+${progressBar}\n
+  - Prompt: ${formatTokenCount(usage.prompt_tokens)}  (${Math.min((usage.prompt_tokens / maxTokens) * 100, 100).toFixed(1)}%)
+  - Completion: ${formatTokenCount(usage.completion_tokens)}  (${Math.min((usage.completion_tokens / maxTokens) * 100, 100).toFixed(1)}%) \n
+Click to Open Configuration UI`;
+
+	applyUsageColoring(statusBarItem, totalTokenCount, maxTokens);
 
 	statusBarItem.show();
 }

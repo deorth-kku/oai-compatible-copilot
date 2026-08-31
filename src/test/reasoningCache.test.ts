@@ -4,8 +4,10 @@ import { CommonApi } from "../commonApi";
 
 suite("reasoningCache migration", () => {
 	// Clear the static memento between tests so state doesn't leak.
-	afterEach(() => {
-		(void CommonApi as unknown as { _memento: vscode.Memento | null })._memento = null;
+	// `teardown` is the tdd-ui equivalent of `afterEach` (the suite runs under
+	// mocha's tdd interface, where `afterEach` is not defined).
+	teardown(() => {
+		(CommonApi as unknown as { _memento: vscode.Memento | null })._memento = null;
 	});
 
 	/**

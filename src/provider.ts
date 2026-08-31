@@ -4,6 +4,7 @@ import {
 	LanguageModelChatInformation,
 	LanguageModelChatProvider,
 	LanguageModelChatRequestMessage,
+	LanguageModelChatTool,
 	ProvideLanguageModelChatResponseOptions,
 	LanguageModelResponsePart2,
 	Progress,
@@ -17,7 +18,7 @@ import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels 
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
-import { updateContextStatusBar } from "./statusBar";
+import { updateContextStatusBar, updateContextStatusBarFromUsage } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
 import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
@@ -261,6 +262,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Ollama API");
 				}
 				await ollamaApi.processStreamingResponse(response.body, trackingProgress, token);
+				this.refreshTokenDisplay(ollamaApi, messages, options.tools, model, modelConfig);
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
 				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
@@ -305,6 +307,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Anthropic API");
 				}
 				await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
+				this.refreshTokenDisplay(anthropicApi, messages, options.tools, model, modelConfig);
 			} else if (apiMode === "openai-responses") {
 				// OpenAI Responses API mode
 				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
@@ -423,6 +426,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (responseId) {
 					trackingProgress.report(createOpenAIResponsesStatefulMarkerPart(statefulModelId, responseId));
 				}
+				this.refreshTokenDisplay(openaiResponsesApi, messages, options.tools, model, modelConfig);
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
 				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
@@ -485,6 +489,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Gemini API");
 				}
 				await geminiApi.processStreamingResponse(response.body, trackingProgress, token);
+				this.refreshTokenDisplay(geminiApi, messages, options.tools, model, modelConfig);
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
@@ -539,9 +544,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 				} finally {
 					this.llamaSpeed.end();
-					// Streaming overwrote the token usage display; refresh it with the
-				// same inputs the request-start update used.
-					void updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
+					// Streaming overwrote the token usage display; refresh it now that
+					// the request is done (server usage first, history count fallback).
+					this.refreshTokenDisplay(openaiApi, messages, options.tools, model, modelConfig);
 				}
 			}
 		} catch (err) {
@@ -566,6 +571,28 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			logger.info("request.end", { modelId: model.id, durationMs });
 			// Update last request time after successful completion
 			this._lastRequestTime = Date.now();
+		}
+	}
+
+	/**
+	 * Refresh the token usage display after a request finishes. Prefers the
+	 * server-reported usage from the final response chunk (it already includes
+	 * the just-generated assistant reply, so the number is current); falls back
+	 * to counting the request history when the response carried no usage
+	 * (e.g. the stream was cancelled before the final chunk arrived).
+	 */
+	private refreshTokenDisplay(
+		api: CommonApi<unknown, unknown>,
+		messages: readonly LanguageModelChatRequestMessage[],
+		tools: readonly LanguageModelChatTool[] | undefined,
+		model: LanguageModelChatInformation,
+		modelConfig: ModelConversionConfig
+	): void {
+		const usage = api.getUsage();
+		if (usage && usage.total_tokens > 0) {
+			updateContextStatusBarFromUsage(usage, model, this.statusBarItem);
+		} else {
+			void updateContextStatusBar(messages, tools, model, this.statusBarItem, modelConfig);
 		}
 	}
 

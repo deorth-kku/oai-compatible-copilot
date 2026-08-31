@@ -338,6 +338,15 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	/** Accumulated token usage from the API response. */
 	protected _usage: TokenUsage | null = null;
 
+	/**
+	 * Token usage captured from the response (server-reported counts).
+	 * Null when the stream ended before a usage payload arrived
+	 * (e.g. the request was cancelled before the final chunk).
+	 */
+	getUsage(): TokenUsage | null {
+		return this._usage;
+	}
+
 	constructor(modelId: string) {
 		this._modelId = modelId;
 	}
