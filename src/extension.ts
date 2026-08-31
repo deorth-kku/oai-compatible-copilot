@@ -8,6 +8,7 @@ import { normalizeUserModels } from "./utils";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { CommonApi } from "./commonApi";
+import { LlamaSpeedDisplay } from "./llamaSpeed";
 
 export function activate(context: vscode.ExtensionContext) {
 	// Initialize logger
@@ -17,7 +18,14 @@ export function activate(context: vscode.ExtensionContext) {
 	TokenizerManager.initialize(context.extensionPath);
 
 	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
-	const provider = new HuggingFaceChatModelProvider(context.secrets, tokenCountStatusBarItem, context.globalState);
+	const llamaSpeedDisplay = new LlamaSpeedDisplay(tokenCountStatusBarItem);
+	context.subscriptions.push(llamaSpeedDisplay);
+	const provider = new HuggingFaceChatModelProvider(
+		context.secrets,
+		tokenCountStatusBarItem,
+		llamaSpeedDisplay,
+		context.globalState
+	);
 	// Hydrate the persisted reasoning cache into memory before any request can run.
 	CommonApi.hydrate();
 	// Register the Hugging Face provider under the vendor id used in package.json

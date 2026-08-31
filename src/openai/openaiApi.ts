@@ -31,8 +31,15 @@ import {
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import { parseLlamaSpeed, type LlamaSpeedState } from "../llamaSpeed";
 
 export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unknown>> {
+	/**
+	 * Optional callback receiving live llama.cpp PP/TG speed state parsed from
+	 * streamed chunks. Set by the provider; undefined when not wired up.
+	 */
+	onSpeedUpdate?: (state: LlamaSpeedState) => void;
+
 	constructor(modelId: string) {
 		super(modelId);
 	}
@@ -300,6 +307,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			rb.repetition_penalty = um.repetition_penalty;
 		}
 
+		// llama.cpp extension flags (ignored by non-llama.cpp backends):
+		// request live prompt_progress (PP phase) and per-chunk timings (TG phase).
+		rb.return_progress = true;
+		rb.timings_per_token = true;
+
 		// Process extra configuration parameters
 		if (um?.extra && typeof um.extra === "object") {
 			// Add all extra parameters directly to the request body
@@ -369,6 +381,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 						if (parsed.usage && typeof parsed.usage === "object") {
 							this._usage = parsed.usage as TokenUsage;
 							logger.debug("usage.capture", { modelId: this._modelId, usage: this._usage });
+						}
+						// Capture optional llama.cpp speed fields (absent on other backends)
+						const speed = parseLlamaSpeed(parsed);
+						if (speed) {
+							this.onSpeedUpdate?.(speed);
 						}
 						await this.processDelta(parsed, progress);
 					} catch (e) {

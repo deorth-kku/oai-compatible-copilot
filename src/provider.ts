@@ -27,6 +27,7 @@ import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } fro
 import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
+import { LlamaSpeedDisplay } from "./llamaSpeed";
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -44,11 +45,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	 * Create a provider using the given secret storage for the API key.
 	 * @param secrets VS Code secret storage.
 	 * @param statusBarItem The status bar item for token display.
+	 * @param llamaSpeed The display for live llama.cpp PP/TG speeds (shares the status bar slot).
 	 * @param globalState Memento used to persist the reasoning replay cache across sessions.
 	 */
 	constructor(
 		private readonly secrets: vscode.SecretStorage,
 		private readonly statusBarItem: vscode.StatusBarItem,
+		private readonly llamaSpeed: LlamaSpeedDisplay,
 		private readonly globalState?: vscode.Memento
 	) {
 		if (globalState) {
@@ -530,7 +533,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (!response.body) {
 					throw new Error("No response body from OAI Compatible API");
 				}
-				await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
+				openaiApi.onSpeedUpdate = (state) => this.llamaSpeed.update(state);
+				this.llamaSpeed.begin();
+				try {
+					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
+				} finally {
+					this.llamaSpeed.end();
+					// Streaming overwrote the token usage display; refresh it with the
+				// same inputs the request-start update used.
+					void updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
+				}
 			}
 		} catch (err) {
 			console.error("[OAI Compatible Model Provider] Chat request failed", {
