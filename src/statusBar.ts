@@ -121,15 +121,17 @@ export function updateContextStatusBarFromUsage(
 	model: LanguageModelChatInformation,
 	statusBarItem: vscode.StatusBarItem
 ): void {
-	const totalTokenCount = usage.total_tokens;
+	const totalTokenCount = usage.total_tokens ?? 0;
+	const promptTokens = usage.prompt_tokens ?? 0;
+	const completionTokens = usage.completion_tokens ?? 0;
 	const maxTokens = model.maxInputTokens + model.maxOutputTokens;
 
 	const progressBar = createProgressBar(totalTokenCount, maxTokens);
 	statusBarItem.text = `$(symbol-parameter) ${progressBar}`;
 	statusBarItem.tooltip = `Token Usage: ${formatTokenCount(totalTokenCount)} / ${formatTokenCount(maxTokens)}\n
 ${progressBar}\n
-  - Prompt: ${formatTokenCount(usage.prompt_tokens)}  (${Math.min((usage.prompt_tokens / maxTokens) * 100, 100).toFixed(1)}%)
-  - Completion: ${formatTokenCount(usage.completion_tokens)}  (${Math.min((usage.completion_tokens / maxTokens) * 100, 100).toFixed(1)}%) \n
+  - Prompt: ${formatTokenCount(promptTokens)}  (${Math.min((promptTokens / maxTokens) * 100, 100).toFixed(1)}%)
+  - Completion: ${formatTokenCount(completionTokens)}  (${Math.min((completionTokens / maxTokens) * 100, 100).toFixed(1)}%) \n
 Click to Open Configuration UI`;
 
 	applyUsageColoring(statusBarItem, totalTokenCount, maxTokens);

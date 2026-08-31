@@ -33,7 +33,7 @@ export function formatPpLine(processed: number, cache: number, total: number, ti
 	if (span <= 0) {
 		return "PP 100%"; // fully cached (or degenerate): no real work
 	}
-	const timed = processed - cache;
+	const timed = Math.max(0, processed - cache);
 	const pct = (timed / span) * 100;
 	let line = "PP";
 	if (timeMs > 0) {
@@ -155,6 +155,7 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 			return;
 		}
 		const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
+		this.item.backgroundColor = undefined;
 		this.item.text = `${icon} ${state.line}`;
 		this.item.tooltip = state.detail ? `${state.line}\n${state.detail}` : state.line;
 		this._lastWrite = Date.now();
