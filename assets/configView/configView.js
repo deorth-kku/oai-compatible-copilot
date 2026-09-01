@@ -54,10 +54,10 @@ const modelEnableThinkingInput = document.getElementById("modelEnableThinking");
 const modelThinkingBudgetInput = document.getElementById("modelThinkingBudget");
 const modelIncludeReasoningInput = document.getElementById("modelIncludeReasoning");
 const modelMaxCompletionTokensInput = document.getElementById("modelMaxCompletionTokens");
-const modelReasoningEnabledInput = document.getElementById("modelReasoningEnabled");
+const modelOptimizationInput = document.getElementById("modelOptimization");
 const modelReasoningExcludeInput = document.getElementById("modelReasoningExclude");
-const modelReasoningEffortORInput = document.getElementById("modelReasoningEffortOR");
-const modelReasoningMaxTokensInput = document.getElementById("modelReasoningMaxTokens");
+const modelReasoningExcludeField = document.getElementById("modelReasoningExcludeField");
+const supportedEffortsGroup = document.getElementById("modelSupportedEfforts");
 const modelThinkingTypeInput = document.getElementById("modelThinkingType");
 const modelHeadersInput = document.getElementById("modelHeaders");
 const modelExtraInput = document.getElementById("modelExtra");
@@ -556,10 +556,10 @@ function resetModelForm() {
 	modelThinkingBudgetInput.value = "";
 	modelIncludeReasoningInput.value = "";
 	modelMaxCompletionTokensInput.value = "";
-	modelReasoningEnabledInput.value = "";
+	modelOptimizationInput.value = "";
 	modelReasoningExcludeInput.value = "";
-	modelReasoningEffortORInput.value = "";
-	modelReasoningMaxTokensInput.value = "";
+	uncheckSupportedEfforts();
+	updateOptimizationVisibility();
 	modelThinkingTypeInput.value = "";
 	modelHeadersInput.value = "";
 	modelExtraInput.value = "";
@@ -602,6 +602,8 @@ function collectModelFormData() {
 		repetition_penalty:
 			modelRepetitionPenaltyInput.value !== "" ? parseFloat(modelRepetitionPenaltyInput.value) : undefined,
 		reasoning_effort: modelReasoningEffortInput.value || undefined,
+		optimization: modelOptimizationInput.value || undefined,
+		supported_efforts: getSupportedEfforts(),
 		enable_thinking: modelEnableThinkingInput.value ? modelEnableThinkingInput.value === "true" : undefined,
 		thinking_budget: modelThinkingBudgetInput.value ? parseInt(modelThinkingBudgetInput.value) : undefined,
 		include_reasoning_in_request: modelIncludeReasoningInput.value
@@ -623,23 +625,44 @@ function collectModelFormData() {
 	};
 }
 
-// Build reasoning configuration object from form fields
+// Build reasoning configuration object from form fields.
+// Only `exclude` is actively used (the sole OpenRouter-unique parameter);
+// effort/budget are reused from the basic settings (reasoning_effort / thinking_budget).
 function buildReasoningConfig() {
-	const enabled = modelReasoningEnabledInput.value ? modelReasoningEnabledInput.value === "true" : undefined;
-	const effort = modelReasoningEffortORInput.value || undefined;
 	const exclude = modelReasoningExcludeInput.value ? modelReasoningExcludeInput.value === "true" : undefined;
-	const maxTokens = modelReasoningMaxTokensInput.value ? parseInt(modelReasoningMaxTokensInput.value) : undefined;
+	return exclude !== undefined ? { exclude } : undefined;
+}
 
-	// Only return an object if at least one field has a value
-	if (enabled !== undefined || effort !== undefined || exclude !== undefined || maxTokens !== undefined) {
-		return {
-			enabled,
-			effort,
-			exclude,
-			max_tokens: maxTokens,
-		};
-	}
-	return undefined;
+// Read the checked values of the supported_efforts checkbox group (only the 7
+// standard values have checkboxes, so unknown values are dropped automatically).
+function getSupportedEfforts() {
+	const checked = Array.from(supportedEffortsGroup.querySelectorAll("input[type='checkbox']:checked")).map(
+		(cb) => cb.value
+	);
+	return checked.length > 0 ? checked : undefined;
+}
+
+// Uncheck every supported_efforts checkbox.
+function uncheckSupportedEfforts() {
+	supportedEffortsGroup.querySelectorAll("input[type='checkbox']").forEach((cb) => {
+		cb.checked = false;
+	});
+}
+
+// Set the supported_efforts checkboxes from an array of values. Only the 7
+// standard values have checkboxes, so unknown values are dropped automatically.
+function setSupportedEfforts(values) {
+	const set = Array.isArray(values) ? values : [];
+	supportedEffortsGroup.querySelectorAll("input[type='checkbox']").forEach((cb) => {
+		cb.checked = set.includes(cb.value);
+	});
+}
+
+// Show/hide the OpenRouter-only "Reasoning Exclude" field based on the
+// selected optimization type.
+function updateOptimizationVisibility() {
+	const isOpenRouter = modelOptimizationInput.value === "openrouter";
+	modelReasoningExcludeField.style.display = isOpenRouter ? "" : "none";
 }
 
 // Build thinking configuration object from form fields
@@ -898,6 +921,27 @@ function populateModelIdDropdown(models) {
 				// OpenRouter exposes context length via the top-level context_length field
 				modelContextLengthInput.value = String(ctxLen);
 			}
+			// Auto-fill Friendly Name from OpenRouter model name (Feature 1)
+			if (typeof model.name === "string" && model.name) {
+				modelDisplayNameInput.value = model.name;
+			}
+			// Auto-fill optimization type from backend signals:
+			//   meta.n_ctx present -> llama.cpp ; supported_parameters (array) -> OpenRouter
+			// Reset first so a model with neither signal doesn't keep the previously
+			// selected model's optimization type.
+			modelOptimizationInput.value = "";
+			if (typeof nCtx === "number" && Number.isFinite(nCtx) && nCtx > 0) {
+				modelOptimizationInput.value = "llama.cpp";
+			} else if (Array.isArray(model.supported_parameters)) {
+				modelOptimizationInput.value = "openrouter";
+			}
+			// Auto-fill supported_efforts from OpenRouter reasoning metadata (Feature 2)
+			setSupportedEfforts(model.reasoning && model.reasoning.supported_efforts);
+			// Auto-fill default reasoning effort from OpenRouter reasoning.default_effort (Feature 3)
+			if (model.reasoning && typeof model.reasoning.default_effort === "string") {
+				modelReasoningEffortInput.value = model.reasoning.default_effort;
+			}
+			updateOptimizationVisibility();
 			// Auto-fill Supports Vision from architecture.input_modalities (llama.cpp & OpenRouter)
 			const inputModalities = model.architecture && model.architecture.input_modalities;
 			if (Array.isArray(inputModalities)) {
@@ -1029,13 +1073,14 @@ function populateModelForm(model) {
 	modelIncludeReasoningInput.value =
 		model.include_reasoning_in_request !== undefined ? String(model.include_reasoning_in_request) : "";
 	modelMaxCompletionTokensInput.value = model.max_completion_tokens || "";
-	// Populate reasoning configuration
+	// Populate dedicated optimization + supported efforts
+	modelOptimizationInput.value = model.optimization || "";
+	setSupportedEfforts(model.supported_efforts);
+	// Populate reasoning configuration (only `exclude` is actively used)
 	if (model.reasoning) {
-		modelReasoningEnabledInput.value = model.reasoning.enabled !== undefined ? String(model.reasoning.enabled) : "";
-		modelReasoningEffortORInput.value = model.reasoning.effort || "";
 		modelReasoningExcludeInput.value = model.reasoning.exclude !== undefined ? String(model.reasoning.exclude) : "";
-		modelReasoningMaxTokensInput.value = model.reasoning.max_tokens || "";
 	}
+	updateOptimizationVisibility();
 	// Populate thinking configuration
 	if (model.thinking) {
 		modelThinkingTypeInput.value = model.thinking.type || "";
@@ -1110,6 +1155,9 @@ function initDropdownEvents() {
 		autoFillFamilyFromModelId(modelIdInput.value, false);
 	});
 }
+
+// Show/hide OpenRouter-only fields when the optimization type changes
+modelOptimizationInput.addEventListener("change", updateOptimizationVisibility);
 
 // Initialize dropdown events
 initDropdownEvents();

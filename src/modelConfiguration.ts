@@ -13,6 +13,26 @@ const REASONING_EFFORT_VALUES: readonly ReasoningEffortPickerValue[] = [
 	"max",
 ];
 
+const REASONING_EFFORT_LABELS: Record<ReasoningEffortPickerValue, string> = {
+	none: "None",
+	minimal: "Minimal",
+	low: "Low",
+	medium: "Medium",
+	high: "High",
+	xhigh: "XHigh",
+	max: "Max",
+};
+
+const REASONING_EFFORT_DESCRIPTIONS: Record<ReasoningEffortPickerValue, string> = {
+	none: "Disable reasoning / thinking",
+	minimal: "Smallest reasoning budget",
+	low: "Low reasoning budget",
+	medium: "Balanced reasoning budget",
+	high: "High reasoning budget",
+	xhigh: "Very high reasoning budget",
+	max: "Maximum reasoning budget",
+};
+
 export const REASONING_EFFORT_CONFIGURATION_SCHEMA = {
 	properties: {
 		reasoningEffort: {
@@ -35,12 +55,27 @@ export const REASONING_EFFORT_CONFIGURATION_SCHEMA = {
 	},
 } as const;
 
-export function createReasoningEffortConfigurationSchema(defaultValue: ReasoningEffortPickerValue) {
+export function createReasoningEffortConfigurationSchema(
+	defaultValue: ReasoningEffortPickerValue,
+	supportedEfforts?: readonly string[]
+) {
+	// Restrict the picker to the model's declared efforts (standard values only,
+	// canonical order); fall back to the full standard set when none are valid.
+	const values =
+		supportedEfforts && supportedEfforts.length > 0
+			? REASONING_EFFORT_VALUES.filter((v) => supportedEfforts.includes(v))
+			: [...REASONING_EFFORT_VALUES];
+	const finalValues = values.length > 0 ? values : [...REASONING_EFFORT_VALUES];
 	return {
 		properties: {
 			reasoningEffort: {
-				...REASONING_EFFORT_CONFIGURATION_SCHEMA.properties.reasoningEffort,
+				type: "string" as const,
+				title: "Reasoning Effort",
+				enum: finalValues,
+				enumItemLabels: finalValues.map((v) => REASONING_EFFORT_LABELS[v]),
+				enumDescriptions: finalValues.map((v) => REASONING_EFFORT_DESCRIPTIONS[v]),
 				default: defaultValue,
+				group: "navigation" as const,
 			},
 		},
 	} as const;
@@ -77,7 +112,14 @@ export function getModelDefaultReasoningEffort(
 }
 
 export function isReasoningEffortPickerEnabled(model: HFModelItem | undefined): boolean {
-	return getModelDefaultReasoningEffort(model) !== undefined;
+	if (getModelDefaultReasoningEffort(model) !== undefined) {
+		return true;
+	}
+	// Also enable the picker when the model declares supported efforts.
+	const supported = (model?.supported_efforts ?? []).filter((v) =>
+		REASONING_EFFORT_VALUES.includes(v as ReasoningEffortPickerValue)
+	);
+	return supported.length > 0;
 }
 
 export function getConfiguredReasoningEffort(

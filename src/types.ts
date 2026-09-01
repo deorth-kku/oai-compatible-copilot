@@ -76,6 +76,18 @@ export interface HFModelItem {
 	repetition_penalty?: number;
 	reasoning?: ReasoningConfig;
 	/**
+	 * Dedicated optimization type for the model backend.
+	 * - "default": no backend-specific extensions
+	 * - "openrouter": OpenRouter-specific reasoning params (effort/budget/exclude)
+	 * - "llama.cpp": llama.cpp-specific flags (return_progress, timings_per_token)
+	 */
+	optimization?: "default" | "openrouter" | "llama.cpp";
+	/**
+	 * Standard reasoning effort values the model supports (drives VS Code picker enum).
+	 * Only standard values: none, minimal, low, medium, high, xhigh, max.
+	 */
+	supported_efforts?: string[];
+	/**
 	 * Optional family specification for the model. This allows users to specify
 	 * the model family (e.g., "gpt-4", "claude-3", "gemini") to enable family-specific
 	 * optimizations and behaviors in the Copilot extension. If not specified,
@@ -139,13 +151,19 @@ export interface HFModelItem {
 }
 
 /**
- * OpenRouter reasoning configuration
+ * OpenRouter reasoning configuration.
+ * Only `exclude` is actively used going forward; `effort`/`max_tokens`/`enabled`
+ * are kept for backward-compat / migration only.
+ * `supported_efforts` and `default_effort` are OpenRouter-provided metadata
+ * (auto-fill source for the user-facing config).
  */
 export interface ReasoningConfig {
 	effort?: string;
 	exclude?: boolean;
 	max_tokens?: number;
 	enabled?: boolean;
+	supported_efforts?: string[];
+	default_effort?: string;
 }
 
 /**

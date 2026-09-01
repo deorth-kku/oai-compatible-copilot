@@ -93,6 +93,19 @@ button:active {
 	height: 16px;
 	accent-color: var(--vscode-button-background);
 }
+.checkbox-group {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	margin-top: 4px;
+}
+.checkbox-group label {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	white-space: nowrap;
+	cursor: pointer;
+}
 .actions {
 	display: flex;
 	gap: 8px;

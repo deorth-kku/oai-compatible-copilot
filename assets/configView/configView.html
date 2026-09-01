@@ -367,47 +367,47 @@
 										<option value="minimal">Minimal</option>
 									</select>
 								</div>
+								<div class="field">
+									<label>Supported Efforts</label>
+									<div class="field-description">
+										Reasoning effort values the model supports (drives the Copilot picker).
+									</div>
+									<div class="checkbox-group" id="modelSupportedEfforts">
+										<label><input type="checkbox" class="checkbox" value="none" /> None</label>
+										<label><input type="checkbox" class="checkbox" value="minimal" /> Minimal</label>
+										<label><input type="checkbox" class="checkbox" value="low" /> Low</label>
+										<label><input type="checkbox" class="checkbox" value="medium" /> Medium</label>
+										<label><input type="checkbox" class="checkbox" value="high" /> High</label>
+										<label><input type="checkbox" class="checkbox" value="xhigh" /> XHigh</label>
+										<label><input type="checkbox" class="checkbox" value="max" /> Max</label>
+									</div>
+								</div>
 							</div>
-							<!-- Reasoning Configuration -->
+							<!-- Dedicated Optimization -->
 							<div class="retry-config">
-								<h3>Reasoning Configuration (OpenRouter)</h3>
+								<h3>Dedicated Optimization</h3>
 								<div class="row">
 									<div class="field">
-										<label for="modelReasoningEnabled">Reasoning Enabled</label>
-										<div class="field-description">Enable reasoning params in request body.</div>
-										<select id="modelReasoningEnabled" class="model-input">
-											<option value=""></option>
-											<option value="true">True</option>
-											<option value="false">False</option>
+										<label for="modelOptimization">Optimization Type</label>
+										<div class="field-description">
+											Backend-specific request extensions. Auto-filled from the model ID.
+										</div>
+										<select id="modelOptimization" class="model-input">
+											<option value="">Default</option>
+											<option value="openrouter">OpenRouter</option>
+											<option value="llama.cpp">llama.cpp</option>
 										</select>
 									</div>
-									<div class="field">
-										<label for="modelReasoningEffortOR">Reasoning Effort</label>
-										<div class="field-description">Include "reasoning.effort" in request body.</div>
-										<select id="modelReasoningEffortOR" class="model-input">
-											<option value=""></option>
-											<option value="max">Max</option>
-											<option value="xhigh">XHigh</option>
-											<option value="high">High</option>
-											<option value="medium">Medium</option>
-											<option value="low">Low</option>
-											<option value="minimal">Minimal</option>
-											<option value="auto">Auto</option>
-										</select>
-									</div>
-									<div class="field">
+									<div class="field" id="modelReasoningExcludeField">
 										<label for="modelReasoningExclude">Reasoning Exclude</label>
-										<div class="field-description">Include "reasoning.exclude" in request body.</div>
+										<div class="field-description">
+											Include "reasoning.exclude" in request body (OpenRouter only).
+										</div>
 										<select id="modelReasoningExclude" class="model-input">
 											<option value=""></option>
 											<option value="true">True</option>
 											<option value="false">False</option>
 										</select>
-									</div>
-									<div class="field">
-										<label for="modelReasoningMaxTokens">Reasoning Max Tokens</label>
-										<div class="field-description">Include "reasoning.max_tokens" in request body.</div>
-										<input id="modelReasoningMaxTokens" type="number" class="model-input" min="1" />
 									</div>
 								</div>
 							</div>

@@ -5,7 +5,10 @@ import type { HFApiMode, HFModelItem, HFModelsResponse } from "./types";
 import {
 	createReasoningEffortConfigurationSchema,
 	getModelDefaultReasoningEffort,
+	isReasoningEffortPickerEnabled,
+	isReasoningEffortValue,
 	type ModelPickerChatInformation,
+	type ReasoningEffortPickerValue,
 } from "./modelConfiguration";
 import { normalizeUserModels } from "./utils";
 import { VersionManager } from "./versionManager";
@@ -46,7 +49,19 @@ export async function prepareLanguageModelChatInformation(
 				const modelId = m.configId ? `${m.id}::${m.configId}` : m.id;
 				const modelName = m.displayName || (m.configId ? `${m.id}::${m.configId}` : `${m.id}`);
 				const detail = m.owned_by ? `${m.owned_by} (${EXTENSION_LABEL})` : EXTENSION_LABEL;
-				const reasoningEffort = getModelDefaultReasoningEffort(m);
+				const pickerEnabled = isReasoningEffortPickerEnabled(m);
+				const standardSupported = (m.supported_efforts ?? []).filter(
+					(v): v is ReasoningEffortPickerValue => isReasoningEffortValue(v)
+				);
+				// Prefer the model's configured default effort, but keep it inside the
+				// picker's enum: when the model declares supported_efforts, a default
+				// outside that set is not a valid enum entry, so fall back to the first
+				// supported value.
+				const modelDefault = getModelDefaultReasoningEffort(m);
+				const schemaDefault =
+					modelDefault && (standardSupported.length === 0 || standardSupported.includes(modelDefault))
+						? modelDefault
+						: standardSupported[0];
 
 				return {
 					id: modelId,
@@ -59,8 +74,13 @@ export async function prepareLanguageModelChatInformation(
 					maxOutputTokens: maxOutput,
 					isUserSelectable: true,
 					isBYOK: true,
-					...(reasoningEffort
-						? { configurationSchema: createReasoningEffortConfigurationSchema(reasoningEffort) }
+					...(pickerEnabled && schemaDefault
+						? {
+							configurationSchema: createReasoningEffortConfigurationSchema(
+								schemaDefault,
+								m.supported_efforts
+							),
+						}
 						: {}),
 					capabilities: {
 						toolCalling: true,

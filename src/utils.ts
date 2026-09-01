@@ -47,6 +47,31 @@ export function getModelProviderId(model: unknown): string {
 	);
 }
 
+/**
+ * Idempotent migration of legacy `reasoning.{enabled,effort,max_tokens}` into
+ * the new `optimization`-driven model.
+ *
+ * Trigger: `model.reasoning` exists AND `model.optimization` is undefined.
+ * After migration, `model.reasoning` only retains `{ exclude }`.
+ */
+function migrateLegacyReasoning(model: HFModelItem): HFModelItem {
+	if (!model.reasoning || model.optimization !== undefined) {
+		return model;
+	}
+	const r = model.reasoning;
+	const optimization = r.enabled === false ? "default" : "openrouter";
+	const migrated: HFModelItem = {
+		...model,
+		optimization,
+		reasoning_effort: model.reasoning_effort ?? r.effort,
+		thinking_budget: model.thinking_budget ?? r.max_tokens,
+	};
+	// Keep only `exclude` (the sole OpenRouter-unique parameter).
+	const exclude = r.exclude;
+	migrated.reasoning = exclude !== undefined ? { exclude } : undefined;
+	return migrated;
+}
+
 export function normalizeUserModels(models: unknown): HFModelItem[] {
 	const list = Array.isArray(models) ? models : [];
 	const out: HFModelItem[] = [];
@@ -55,7 +80,8 @@ export function normalizeUserModels(models: unknown): HFModelItem[] {
 			continue;
 		}
 		const provider = getModelProviderId(item);
-		out.push({ ...(item as HFModelItem), owned_by: provider });
+		const model = migrateLegacyReasoning({ ...(item as HFModelItem), owned_by: provider });
+		out.push(model);
 	}
 	return out;
 }

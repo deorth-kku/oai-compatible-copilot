@@ -43,6 +43,43 @@ suite("modelConfiguration", () => {
 		assert.strictEqual(createReasoningEffortConfigurationSchema("high").properties.reasoningEffort.default, "high");
 	});
 
+	test("builds the reasoning effort enum from supported_efforts (standard values only)", () => {
+		// Custom subset, canonical order preserved
+		const schema = createReasoningEffortConfigurationSchema("high", ["high", "low", "none"]);
+		const prop = schema.properties.reasoningEffort;
+		assert.deepStrictEqual(prop.enum, ["none", "low", "high"]);
+		assert.deepStrictEqual(prop.enumItemLabels, ["None", "Low", "High"]);
+		assert.strictEqual(prop.default, "high");
+
+		// Unknown values are dropped; falls back to the full standard set when none are valid
+		const fallback = createReasoningEffortConfigurationSchema("medium", ["bogus", "weird"]);
+		assert.deepStrictEqual(fallback.properties.reasoningEffort.enum, [
+			"none",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+
+		// No supported_efforts -> full standard set
+		const full = createReasoningEffortConfigurationSchema("medium");
+		assert.strictEqual(full.properties.reasoningEffort.enum.length, 7);
+	});
+
+	test("enables the picker when supported_efforts declares standard values", () => {
+		assert.strictEqual(
+			isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", supported_efforts: ["high", "low"] }),
+			true
+		);
+		// Only non-standard values -> disabled
+		assert.strictEqual(
+			isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", supported_efforts: ["bogus"] }),
+			false
+		);
+	});
+
 	test("reads the selected reasoning effort from VS Code model configuration", () => {
 		assert.strictEqual(getConfiguredReasoningEffort(undefined), "medium");
 		assert.strictEqual(getConfiguredReasoningEffort(undefined, "low"), "low");

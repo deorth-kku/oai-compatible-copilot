@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem, ReasoningConfig, TokenUsage, ModelConversionConfig } from "../types";
+import type { HFModelItem, TokenUsage, ModelConversionConfig } from "../types";
 import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 
 import type {
@@ -245,29 +245,29 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			};
 		}
 
-		// OpenRouter reasoning configuration
-		if (um?.reasoning !== undefined) {
-			const reasoningConfig: ReasoningConfig = um.reasoning as ReasoningConfig;
+		// OpenRouter reasoning configuration (gated on the dedicated optimization type).
+		if (um?.optimization === "openrouter") {
 			// When the picker selects "none", disable OpenRouter reasoning entirely
 			// by setting `enabled: false` and skipping `reasoning.effort`.
 			const uiEffort = isReasoningEffortPickerEnabled(um) ? getConfiguredReasoningEffort(options) : undefined;
 			if (uiEffort === "none") {
 				rb.reasoning = { enabled: false };
-			} else if (reasoningConfig.enabled !== false) {
+			} else {
 				const reasoningObj: Record<string, unknown> = {};
-				// Use the UI-selected reasoning effort only when the model offers the picker
-				// (i.e. it has a valid `reasoning_effort` or `reasoning.effort` default);
-				// otherwise fall back to the model's configured `reasoning.effort`.
-				const effort = uiEffort ?? reasoningConfig.effort;
-				const maxTokensReasoning = reasoningConfig.max_tokens || 2000; // Default 2000 as per docs
+				// effort: picker selection takes precedence, else the model's
+				// configured `reasoning_effort` (basic setting, reused here).
+				const effort = uiEffort ?? um.reasoning_effort;
+				// budget: reuse the basic `thinking_budget` setting (default 2000).
+				const maxTokensReasoning = um.thinking_budget ?? 2000;
 				if (effort && effort !== "auto") {
 					reasoningObj.effort = effort;
 				} else {
 					// If auto or unspecified, use max_tokens (Anthropic-style fallback)
 					reasoningObj.max_tokens = maxTokensReasoning;
 				}
-				if (reasoningConfig.exclude !== undefined) {
-					reasoningObj.exclude = reasoningConfig.exclude;
+				// `exclude` is the only OpenRouter-unique reasoning parameter.
+				if (um.reasoning?.exclude !== undefined) {
+					reasoningObj.exclude = um.reasoning.exclude;
 				}
 				rb.reasoning = reasoningObj;
 			}
@@ -307,10 +307,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			rb.repetition_penalty = um.repetition_penalty;
 		}
 
-		// llama.cpp extension flags (ignored by non-llama.cpp backends):
+		// llama.cpp extension flags (only sent when the model is dedicated to llama.cpp):
 		// request live prompt_progress (PP phase) and per-chunk timings (TG phase).
-		rb.return_progress = true;
-		rb.timings_per_token = true;
+		if (um?.optimization === "llama.cpp") {
+			rb.return_progress = true;
+			rb.timings_per_token = true;
+		}
 
 		// Process extra configuration parameters
 		if (um?.extra && typeof um.extra === "object") {
