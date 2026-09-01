@@ -795,10 +795,15 @@ function populateModelIdDropdown(models) {
 		// Add click event
 		option.addEventListener("click", () => {
 			modelIdInput.value = model.id;
-			// Auto-fill Context Length from llama.cpp meta.n_ctx (no-op if absent)
+			// Auto-fill Context Length from llama.cpp meta.n_ctx or OpenRouter context_length (no-op if absent)
 			const nCtx = model.meta && model.meta.n_ctx;
+			const ctxLen = model.context_length;
+			// llama.cpp exposes context length via meta.n_ctx
 			if (typeof nCtx === "number" && Number.isFinite(nCtx) && nCtx > 0) {
 				modelContextLengthInput.value = String(nCtx);
+			} else if (typeof ctxLen === "number" && Number.isFinite(ctxLen) && ctxLen > 0) {
+				// OpenRouter exposes context length via the top-level context_length field
+				modelContextLengthInput.value = String(ctxLen);
 			}
 			hideDropdown();
 
