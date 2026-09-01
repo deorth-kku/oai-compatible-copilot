@@ -805,6 +805,11 @@ function populateModelIdDropdown(models) {
 				// OpenRouter exposes context length via the top-level context_length field
 				modelContextLengthInput.value = String(ctxLen);
 			}
+			// Auto-fill Supports Vision from architecture.input_modalities (llama.cpp & OpenRouter)
+			const inputModalities = model.architecture && model.architecture.input_modalities;
+			if (Array.isArray(inputModalities)) {
+				modelVisionInput.value = inputModalities.includes("image") ? "true" : "false";
+			}
 			hideDropdown();
 
 			// Remove selection from all options
