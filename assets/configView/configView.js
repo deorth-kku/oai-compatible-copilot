@@ -771,6 +771,99 @@ function validateModelData(modelData) {
 	return true;
 }
 
+// Heuristically infer the VS Code Copilot "family" string from a model id.
+// Order matters: more specific patterns first, then fall back to broad vendor names.
+// Only fills in when the family field is currently empty, so the user's manual
+// edits are preserved.
+function inferModelFamily(modelId) {
+	if (!modelId || typeof modelId !== "string") {
+		return undefined;
+	}
+	const id = modelId.toLowerCase();
+
+	// --- Anthropic Claude (specific models first, then broad family) ---
+	if (id.includes("claude")) {
+		// Specific Claude 4.x / 3.x variants that Copilot recognises individually
+		const claudeSpecificMatch = id.match(/claude-(sonnet|haiku|opus)-(\d+-\d+)/);
+		if (claudeSpecificMatch) {
+			return `claude-${claudeSpecificMatch[1]}-${claudeSpecificMatch[2]}`;
+		}
+		// Match Claude 4 / 3 / 3.5 / 3.7 short tags (e.g. claude-4-sonnet, claude-3-5-haiku)
+		const claudeShortMatch = id.match(/claude-(\d+(?:-\d+)?)-(sonnet|haiku|opus)/);
+		if (claudeShortMatch) {
+			return `claude-${claudeShortMatch[1]}-${claudeShortMatch[2]}`;
+		}
+		return "claude";
+	}
+
+	// --- Google Gemini (specific then broad) ---
+	if (id.includes("gemini")) {
+		const geminiSpecificMatch = id.match(/gemini-(\d+(?:\.\d+)?)-(pro|flash|ultra|nano)/);
+		if (geminiSpecificMatch) {
+			return `gemini-${geminiSpecificMatch[1]}-${geminiSpecificMatch[2]}`;
+		}
+		return "gemini";
+	}
+
+	// --- xAI Grok ---
+	// Copilot recognises 'grok-code' specifically
+	if (id.includes("grok")) {
+		return "grok-code";
+	}
+
+	// --- OpenAI o-series (o1, o1-preview, o3-mini, o4-mini, o5, ...) ---
+	const oSeriesMatch = id.match(/\b(o\d+(?:-(?:mini|preview))?)\b/);
+	if (oSeriesMatch) {
+		return oSeriesMatch[1];
+	}
+
+	// --- OpenAI GPT family (specific variants first, then broad 'gpt') ---
+	// gpt-N-codex variants (Copilot recognises gpt-N-codex via startsWith('gpt-') && includes('-codex'))
+	if (/gpt-\d.*codex/.test(id)) {
+		const codexMatch = id.match(/gpt-(\d+)-codex/);
+		if (codexMatch) {
+			return `gpt-${codexMatch[1]}-codex`;
+		}
+		return "gpt-5-codex";
+	}
+	// Pattern A: gpt-N(.M) + up to 3 hyphenated suffix segments (gpt-3.5-turbo-instruct, gpt-5-mini-preview...)
+	// Stop before a YYYY-MM-DD date suffix so gpt-4o-2024-08-06 -> gpt-4o.
+	const gptHyphenMatch = id.match(/\b(gpt-\d+(?:\.\d+)?(?:[-][a-z0-9]+){0,3})(?=-20\d{2}(?:-\d{2}){0,2}\b|\b)/);
+	if (gptHyphenMatch && gptHyphenMatch[1] !== "gpt") {
+		return gptHyphenMatch[1];
+	}
+	// Pattern B: gpt-N(.M) followed by a single alpha letter (gpt-4o, gpt-4oi) + up to 2 [-suffix] segments
+	const gptAlphaMatch = id.match(/\b(gpt-\d+(?:\.\d+)?[a-z](?:[-][a-z0-9]+){0,2})(?=-20\d{2}(?:-\d{2}){0,2}\b|\b)/);
+	if (gptAlphaMatch) {
+		return gptAlphaMatch[1];
+	}
+	// Pattern C: plain gpt-N(.M)
+	const gptBaseMatch = id.match(/\bgpt-\d+(?:\.\d+)?/);
+	if (gptBaseMatch && id.includes("gpt")) {
+		return gptBaseMatch[0];
+	}
+
+	return undefined;
+}
+
+// Auto-fill the family input from a model id.
+//   force=false (default): respect user's manual edits — only fill when the
+//     field is empty. Used while the user is typing in the model id box.
+//   force=true: unconditionally overwrite the family. Used when the user
+//     selects a model from the autocomplete dropdown, since picking an entry
+//     from the suggestion list is a deliberate confirmation rather than a
+//     free-form edit (e.g. typing "gpt5" auto-fills "gpt", then choosing
+//     "gpt-5.5-pro" from the dropdown should refresh to "gpt-5.5-pro").
+function autoFillFamilyFromModelId(modelId, force) {
+	if (!force && modelFamilyInput.value && modelFamilyInput.value.trim() !== "") {
+		return; // respect user's manual input
+	}
+	const family = inferModelFamily(modelId);
+	if (family) {
+		modelFamilyInput.value = family;
+	}
+}
+
 // Function to populate the model ID datalist
 function populateModelIdDropdown(models) {
 	const modelsArray = Array.from(models || []);
@@ -810,6 +903,13 @@ function populateModelIdDropdown(models) {
 			if (Array.isArray(inputModalities)) {
 				modelVisionInput.value = inputModalities.includes("image") ? "true" : "false";
 			}
+			// Heuristic auto-fill for Model Family based on the model id
+			// Force overwrite on dropdown selection: picking a suggestion from the
+			// autocomplete list is an explicit confirmation, not a free-form edit,
+			// so it should refresh a value that may have been filled from a
+			// partial earlier match (e.g. user typed "gpt5" -> auto-filled "gpt",
+			// then picks "gpt-5.5-pro" -> should refresh to "gpt-5.5-pro").
+			autoFillFamilyFromModelId(model.id, true);
 			hideDropdown();
 
 			// Remove selection from all options
@@ -1004,6 +1104,10 @@ function initDropdownEvents() {
 		// Update header with filtered count
 		const visibleCount = Array.from(options).filter((opt) => opt.style.display !== "none").length;
 		dropdownHeader.textContent = `Select Model (${visibleCount} matching)`;
+
+		// Heuristic auto-fill for Model Family from the typed model id
+		// (no-op when the user has already typed a family value)
+		autoFillFamilyFromModelId(modelIdInput.value, false);
 	});
 }
 
