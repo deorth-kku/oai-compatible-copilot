@@ -543,7 +543,7 @@ function resetModelForm() {
 	modelMaxTokensInput.value = 4096;
 	modelVisionInput.value = "";
 	modelApiModeInput.value = "openai";
-	modelTemperatureInput.value = 0;
+	modelTemperatureInput.value = "";
 	modelTopPInput.value = "";
 	modelDelayInput.value = "";
 	modelTopKInput.value = "";
