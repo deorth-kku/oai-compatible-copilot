@@ -559,6 +559,7 @@ function resetModelForm() {
 	modelOptimizationInput.value = "";
 	modelReasoningExcludeInput.value = "";
 	uncheckSupportedEfforts();
+	syncReasoningEffortOptions();
 	updateOptimizationVisibility();
 	modelThinkingTypeInput.value = "";
 	modelHeadersInput.value = "";
@@ -656,6 +657,41 @@ function setSupportedEfforts(values) {
 	supportedEffortsGroup.querySelectorAll("input[type='checkbox']").forEach((cb) => {
 		cb.checked = set.includes(cb.value);
 	});
+}
+
+// Standard effort values in display order (matches the original dropdown order).
+const STANDARD_EFFORT_VALUES = ["max", "xhigh", "high", "medium", "low", "minimal", "none"];
+const STANDARD_EFFORT_LABELS = {
+	none: "None",
+	minimal: "Minimal",
+	low: "Low",
+	medium: "Medium",
+	high: "High",
+	xhigh: "XHigh",
+	max: "Max",
+};
+
+// Rebuild the Reasoning Effort dropdown options from the checked
+// supported_efforts checkboxes: blank + checked values. When no checkbox is
+// checked, fall back to blank + all 7 standard values.
+function syncReasoningEffortOptions() {
+	const checked = Array.from(supportedEffortsGroup.querySelectorAll("input[type='checkbox']:checked")).map(
+		(cb) => cb.value
+	);
+	const values = checked.length > 0 ? checked : STANDARD_EFFORT_VALUES;
+	const current = modelReasoningEffortInput.value;
+	modelReasoningEffortInput.innerHTML = "";
+	const blank = document.createElement("option");
+	blank.value = "";
+	modelReasoningEffortInput.appendChild(blank);
+	values.forEach((v) => {
+		const opt = document.createElement("option");
+		opt.value = v;
+		opt.textContent = STANDARD_EFFORT_LABELS[v] || v;
+		modelReasoningEffortInput.appendChild(opt);
+	});
+	// Preserve the current selection only if it is still a valid option
+	modelReasoningEffortInput.value = values.includes(current) ? current : "";
 }
 
 // Show/hide the OpenRouter-only "Reasoning Exclude" field based on the
@@ -941,6 +977,7 @@ function populateModelIdDropdown(models) {
 			if (model.reasoning && typeof model.reasoning.default_effort === "string") {
 				modelReasoningEffortInput.value = model.reasoning.default_effort;
 			}
+			syncReasoningEffortOptions();
 			updateOptimizationVisibility();
 			// Auto-fill Supports Vision from architecture.input_modalities (llama.cpp & OpenRouter)
 			const inputModalities = model.architecture && model.architecture.input_modalities;
@@ -1076,6 +1113,7 @@ function populateModelForm(model) {
 	// Populate dedicated optimization + supported efforts
 	modelOptimizationInput.value = model.optimization || "";
 	setSupportedEfforts(model.supported_efforts);
+	syncReasoningEffortOptions();
 	// Populate reasoning configuration (only `exclude` is actively used)
 	if (model.reasoning) {
 		modelReasoningExcludeInput.value = model.reasoning.exclude !== undefined ? String(model.reasoning.exclude) : "";
@@ -1158,7 +1196,7 @@ function initDropdownEvents() {
 
 // Show/hide OpenRouter-only fields when the optimization type changes
 modelOptimizationInput.addEventListener("change", updateOptimizationVisibility);
-
+supportedEffortsGroup.addEventListener("change", syncReasoningEffortOptions);
 // Initialize dropdown events
 initDropdownEvents();
 
