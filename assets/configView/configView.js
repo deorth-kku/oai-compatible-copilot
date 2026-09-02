@@ -37,6 +37,7 @@ const modelDisplayNameInput = document.getElementById("modelDisplayName");
 const modelConfigIdInput = document.getElementById("modelConfigId");
 const modelBaseUrlInput = document.getElementById("modelBaseUrl");
 const modelFamilyInput = document.getElementById("modelFamily");
+const modelStatusIconInput = document.getElementById("modelStatusIcon");
 const modelContextLengthInput = document.getElementById("modelContextLength");
 const modelMaxTokensInput = document.getElementById("modelMaxTokens");
 const modelVisionInput = document.getElementById("modelVision");
@@ -539,6 +540,7 @@ function resetModelForm() {
 	modelConfigIdInput.value = "";
 	modelBaseUrlInput.value = "";
 	modelFamilyInput.value = "";
+	modelStatusIconInput.value = "";
 	modelContextLengthInput.value = 128000;
 	modelMaxTokensInput.value = 4096;
 	modelVisionInput.value = "";
@@ -588,6 +590,7 @@ function collectModelFormData() {
 		configId: modelConfigIdInput.value.trim() || undefined,
 		baseUrl: modelBaseUrlInput.value.trim() || undefined,
 		family: modelFamilyInput.value.trim() || undefined,
+		statusIcon: modelStatusIconInput.value.trim() || undefined,
 		context_length: modelContextLengthInput.value ? parseInt(modelContextLengthInput.value) : undefined,
 		max_tokens: modelMaxTokensInput.value ? parseInt(modelMaxTokensInput.value) : undefined,
 		vision: modelVisionInput.value ? modelVisionInput.value === "true" : undefined,
@@ -870,13 +873,30 @@ function inferModelFamily(modelId) {
 		return "grok-code";
 	}
 
-	// --- OpenAI o-series (o1, o1-preview, o3-mini, o4-mini, o5, ...) ---
+	// --- OpenAI (GPT family + o-series) ---
+	const openaiVariant = inferOpenAIVariant(id);
+	if (openaiVariant) {
+		return openaiVariant;
+	}
+
+	return undefined;
+}
+
+// Internal helper: return the OpenAI GPT/o-series variant string (e.g. "gpt-5",
+// "gpt-5-codex", "o3-mini") if `id` matches, else undefined. Shared by
+// `inferModelFamily` (for the `family` field) and `inferStatusIcon` (for the
+// `statusIcon` field, where any OpenAI model collapses to "openai").
+function inferOpenAIVariant(id) {
+	if (!id) {
+		return undefined;
+	}
+	// OpenAI o-series (o1, o1-preview, o3-mini, o4-mini, o5, ...)
 	const oSeriesMatch = id.match(/\b(o\d+(?:-(?:mini|preview))?)\b/);
 	if (oSeriesMatch) {
 		return oSeriesMatch[1];
 	}
 
-	// --- OpenAI GPT family (specific variants first, then broad 'gpt') ---
+	// OpenAI GPT family (specific variants first, then broad 'gpt')
 	// gpt-N-codex variants (Copilot recognises gpt-N-codex via startsWith('gpt-') && includes('-codex'))
 	if (/gpt-\d.*codex/.test(id)) {
 		const codexMatch = id.match(/gpt-(\d+)-codex/);
@@ -905,6 +925,45 @@ function inferModelFamily(modelId) {
 	return undefined;
 }
 
+// Heuristically infer a VS Code codicon id ("statusIcon") from a model id.
+// Mirrors `inferModelFamily`: only recognised vendors map to a codicon; unknown
+// vendors return undefined so the field stays empty (no `robot` fallback).
+function inferStatusIcon(modelId) {
+	if (!modelId || typeof modelId !== "string") {
+		return undefined;
+	}
+	const id = modelId.toLowerCase();
+
+	// --- Anthropic Claude (the codicon library only has a single "claude" id) ---
+	if (id.includes("claude")) {
+		return "claude";
+	}
+
+	// --- Google Gemini ---
+	if (id.includes("gemini")) {
+		return "google-gemini";
+	}
+
+	// --- OpenAI (GPT family + o-series) — share the helper with `inferModelFamily` ---
+	if (inferOpenAIVariant(id)) {
+		return "openai";
+	}
+
+	// --- xAI Grok ---
+	if (id.includes("grok")) {
+		return "xai";
+	}
+
+	// --- Moonshot Kimi ---
+	if (id.includes("kimi") || id.includes("moonshot")) {
+		return "kimi";
+	}
+
+	// Unrecognised vendors stay empty — matches `family`'s behavior (no
+	// forced fallback, no `robot` default).
+	return undefined;
+}
+
 // Auto-fill the family input from a model id.
 //   force=false (default): respect user's manual edits — only fill when the
 //     field is empty. Used while the user is typing in the model id box.
@@ -921,6 +980,29 @@ function autoFillFamilyFromModelId(modelId, force) {
 	if (family) {
 		modelFamilyInput.value = family;
 	}
+}
+
+// Auto-fill the statusIcon input from a model id. Same contract as
+// `autoFillFamilyFromModelId`:
+//   force=false: respect user's manual edits, only fill when empty.
+//   force=true: unconditionally overwrite (used for dropdown selections).
+function autoFillStatusIconFromModelId(modelId, force) {
+	if (!force && modelStatusIconInput.value.trim() !== "") {
+		return; // respect user's manual input
+	}
+	const statusIcon = inferStatusIcon(modelId);
+	if (statusIcon) {
+		modelStatusIconInput.value = statusIcon;
+	}
+}
+
+// Dispatcher: re-run both auto-fill helpers against the same model id with the
+// same `force` flag. Keeps the two heuristics in lockstep (one call site per
+// trigger — model id input vs. dropdown selection) and avoids the two fields
+// drifting apart.
+function autoFillDerivedFieldsFromModelId(modelId, force) {
+	autoFillFamilyFromModelId(modelId, force);
+	autoFillStatusIconFromModelId(modelId, force);
 }
 
 // Function to populate the model ID datalist
@@ -990,7 +1072,9 @@ function populateModelIdDropdown(models) {
 			// so it should refresh a value that may have been filled from a
 			// partial earlier match (e.g. user typed "gpt5" -> auto-filled "gpt",
 			// then picks "gpt-5.5-pro" -> should refresh to "gpt-5.5-pro").
-			autoFillFamilyFromModelId(model.id, true);
+			// The same `force=true` is forwarded to both auto-fill helpers (family
+			// and statusIcon) so the two fields stay in sync.
+			autoFillDerivedFieldsFromModelId(model.id, true);
 			hideDropdown();
 
 			// Remove selection from all options
@@ -1092,6 +1176,7 @@ function populateModelForm(model) {
 	modelConfigIdInput.value = model.configId || "";
 	modelBaseUrlInput.value = model.baseUrl || "";
 	modelFamilyInput.value = model.family || "";
+	modelStatusIconInput.value = model.statusIcon || "";
 	modelContextLengthInput.value = model.context_length || "";
 	modelMaxTokensInput.value = model.max_tokens || "";
 	modelVisionInput.value = model.vision !== undefined ? String(model.vision) : "";
@@ -1188,9 +1273,10 @@ function initDropdownEvents() {
 		const visibleCount = Array.from(options).filter((opt) => opt.style.display !== "none").length;
 		dropdownHeader.textContent = `Select Model (${visibleCount} matching)`;
 
-		// Heuristic auto-fill for Model Family from the typed model id
-		// (no-op when the user has already typed a family value)
-		autoFillFamilyFromModelId(modelIdInput.value, false);
+		// Heuristic auto-fill for derived fields (Model Family + Status Icon)
+		// from the typed model id. No-op when the user has already typed a
+		// value into either field.
+		autoFillDerivedFieldsFromModelId(modelIdInput.value, false);
 	});
 }
 

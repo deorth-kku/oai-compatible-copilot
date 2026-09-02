@@ -69,6 +69,7 @@ export async function prepareLanguageModelChatInformation(
 					detail: detail,
 					tooltip: detail,
 					family: m.family ?? EXTENSION_LABEL,
+					statusIcon: m.statusIcon ? new vscode.ThemeIcon(m.statusIcon) : undefined,
 					version: "1.0.0",
 					maxInputTokens: maxInput,
 					maxOutputTokens: maxOutput,

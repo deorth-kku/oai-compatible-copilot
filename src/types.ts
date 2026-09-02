@@ -96,6 +96,14 @@ export interface HFModelItem {
 	family?: string;
 
 	/**
+	 * Optional VS Code codicon id (kebab-case, e.g. "openai", "claude", "google-gemini",
+	 * "lightbulb-sparkle") shown next to the model in the Copilot model picker via
+	 * {@linkcode vscode.ThemeIcon}. Any valid codicon id is accepted; leave empty to
+	 * use the default icon. Unknown ids fall back to a missing-glyph without crashing.
+	 */
+	statusIcon?: string;
+
+	/**
 	 * Extra configuration parameters that can be used for custom functionality.
 	 * This allows users to add any additional parameters they might need
 	 * without modifying the core interface.

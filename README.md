@@ -424,6 +424,7 @@ All parameters support individual configuration for different models, providing 
 - `displayName`: Display name for the model that will be shown in the Copilot interface.
 - `configId`: Configuration ID for this model. Allows defining the same model with different settings (e.g. 'glm-4.6::thinking', 'glm-4.6::no-thinking')
 - `family`: Model family (e.g., 'gpt-4', 'claude-3', 'gemini'). Enables model-specific optimizations and behaviors. Defaults to 'oai-compatible' if not specified.
+- `statusIcon`: VS Code codicon id (e.g., `openai`, `claude`, `google-gemini`, `xai`, `kimi`) shown next to the model in the Copilot picker. Auto-filled from the model id when left empty; manually edited values are preserved while typing. Leave empty to use the default icon. Any valid codicon id is accepted.
 - `baseUrl`: Model-specific base URL. If not provided, the global `oaicopilot.baseUrl` will be used
 - `context_length`: The context length supported by the model. Default value is 128000
 - `max_tokens`: Maximum number of tokens to generate (range: [1, context_length]). Default value is 4096

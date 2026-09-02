@@ -291,6 +291,41 @@
 									<input id="modelFamily" type="text" class="model-input" placeholder="e.g., gpt-4, claude-3 (auto-filled from id)" />
 								</div>
 								<div class="field">
+									<label for="modelStatusIcon">Status Icon</label>
+									<div class="field-description">
+										Codicon id shown next to the model in the Copilot picker (e.g., 'openai', 'claude',
+										'google-gemini'). Auto-filled from model id when empty. Pick from the suggestions or type
+										any valid codicon id; leave empty to use the default icon.
+									</div>
+									<input
+										id="modelStatusIcon"
+										list="statusIconOptions"
+										type="text"
+										class="model-input"
+										placeholder="e.g., openai (blank = default)"
+									/>
+									<datalist id="statusIconOptions">
+										<option value="openai"></option>
+										<option value="claude"></option>
+										<option value="google-gemini"></option>
+										<option value="kimi"></option>
+										<option value="xai"></option>
+										<option value="copilot"></option>
+										<option value="robot"></option>
+										<option value="rocket"></option>
+										<option value="sparkle"></option>
+										<option value="lightbulb-sparkle"></option>
+										<option value="copilot-large"></option>
+									</datalist>
+								</div>
+								<div class="field">
+									<label for="modelThinkingBudget">Thinking Budget</label>
+									<div class="field-description">Maximum number of tokens for chain-of-thought output.</div>
+									<input id="modelThinkingBudget" type="number" class="model-input" min="128" />
+								</div>
+							</div>
+							<div class="row">
+								<div class="field">
 									<label for="modelTopK">Top K</label>
 									<div class="field-description">Top-k sampling value (range: [1, Infinity)).</div>
 									<input id="modelTopK" type="number" class="model-input" min="1" />
@@ -299,13 +334,6 @@
 									<label for="modelMinP">Min P</label>
 									<div class="field-description">Minimum probability threshold (range: [0, 1]).</div>
 									<input id="modelMinP" type="number" class="model-input" min="0" max="1" step="0.01" />
-								</div>
-							</div>
-							<div class="row">
-								<div class="field">
-									<label for="modelThinkingBudget">Thinking Budget</label>
-									<div class="field-description">Maximum number of tokens for chain-of-thought output.</div>
-									<input id="modelThinkingBudget" type="number" class="model-input" min="128" />
 								</div>
 								<div class="field">
 									<label for="modelFrequencyPenalty">Frequency Penalty</label>
