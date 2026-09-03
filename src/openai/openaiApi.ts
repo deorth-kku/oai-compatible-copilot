@@ -312,6 +312,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		if (um?.optimization === "llama.cpp") {
 			rb.return_progress = true;
 			rb.timings_per_token = true;
+			// llama.cpp exposes the thinking budget as the top-level
+			// `reasoning_budget_tokens` field (reuses the basic `thinking_budget` setting).
+			if (um.thinking_budget !== undefined) {
+				rb.reasoning_budget_tokens = um.thinking_budget;
+			}
 		}
 
 		// Process extra configuration parameters
