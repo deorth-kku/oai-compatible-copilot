@@ -14,7 +14,7 @@ import type { HFModelItem, ModelConversionConfig } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
-import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels } from "./utils";
+import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels, sanitizeUserMessages } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
@@ -166,8 +166,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				vision: um?.vision ?? false,
 			};
 
+			// Per-model opt-in: strip the first <reminderInstructions> block that Copilot
+			// injects into every user turn before sending the request upstream.
+			const requestMessages =
+				um?.strip_reminder_instructions === true ? sanitizeUserMessages(messages) : messages;
+
 			// Update Token Usage
-			updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
+			updateContextStatusBar(requestMessages, options.tools, model, this.statusBarItem, modelConfig);
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
@@ -219,12 +224,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
 			});
 			logger.debug("request.messages.origin", {
-				messages: messages,
+				messages: requestMessages,
 			});
 			if (apiMode === "ollama") {
 				// Ollama native API mode
 				const ollamaApi = new OllamaApi(model.id);
-				const ollamaMessages = ollamaApi.convertMessages(messages, modelConfig);
+				const ollamaMessages = ollamaApi.convertMessages(requestMessages, modelConfig);
 
 				let ollamaRequestBody: OllamaRequestBody = {
 					model: parsedModelId.baseId,
@@ -262,11 +267,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Ollama API");
 				}
 				await ollamaApi.processStreamingResponse(response.body, trackingProgress, token);
-				this.refreshTokenDisplay(ollamaApi, messages, options.tools, model, modelConfig);
+				this.refreshTokenDisplay(ollamaApi, requestMessages, options.tools, model, modelConfig);
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
 				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
-				const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
+				const anthropicMessages = anthropicApi.convertMessages(requestMessages, modelConfig);
 
 				// requestBody
 				let requestBody: AnthropicRequestBody = {
@@ -307,7 +312,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Anthropic API");
 				}
 				await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
-				this.refreshTokenDisplay(anthropicApi, messages, options.tools, model, modelConfig);
+				this.refreshTokenDisplay(anthropicApi, requestMessages, options.tools, model, modelConfig);
 			} else if (apiMode === "openai-responses") {
 				// OpenAI Responses API mode
 				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
@@ -317,19 +322,19 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// cache is scoped per conversation (VS Code only round-trips text
 				// content, so we can't carry a random id; we hash the first user
 				// message). Prevents switching sessions from leaking reasoning.
-				openaiResponsesApi.setConvIdFromMessages(messages);
+				openaiResponsesApi.setConvIdFromMessages(requestMessages);
 				// Key the current turn by the absolute index the response will occupy
 				// in the full history (append-only), so it matches the replay key.
 				// Model-agnostic so switching models mid-session keeps replaying reasoning.
-				openaiResponsesApi.setCurrentTurnKey(String(messages.length));
+				openaiResponsesApi.setCurrentTurnKey(String(requestMessages.length));
 
 				// Convert full history once (also extracts system `instructions`).
-				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
+				const fullInput = openaiResponsesApi.convertMessages(requestMessages, modelConfig);
 
-				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
+				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, requestMessages);
 				let deltaInput: unknown[] | null = null;
-				if (marker && marker.index >= 0 && marker.index < messages.length - 1) {
-					const deltaMessages = messages.slice(marker.index + 1);
+				if (marker && marker.index >= 0 && marker.index < requestMessages.length - 1) {
+					const deltaMessages = requestMessages.slice(marker.index + 1);
 					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig, marker.index + 1);
 					if (converted.length > 0) {
 						deltaInput = converted;
@@ -426,11 +431,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (responseId) {
 					trackingProgress.report(createOpenAIResponsesStatefulMarkerPart(statefulModelId, responseId));
 				}
-				this.refreshTokenDisplay(openaiResponsesApi, messages, options.tools, model, modelConfig);
+				this.refreshTokenDisplay(openaiResponsesApi, requestMessages, options.tools, model, modelConfig);
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
 				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
-				const geminiMessages = geminiApi.convertMessages(messages, modelConfig);
+				const geminiMessages = geminiApi.convertMessages(requestMessages, modelConfig);
 
 				const systemParts: string[] = [];
 				const contents: GeminiGenerateContentRequest["contents"] = [];
@@ -489,7 +494,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Gemini API");
 				}
 				await geminiApi.processStreamingResponse(response.body, trackingProgress, token);
-				this.refreshTokenDisplay(geminiApi, messages, options.tools, model, modelConfig);
+				this.refreshTokenDisplay(geminiApi, requestMessages, options.tools, model, modelConfig);
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
@@ -497,12 +502,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// cache is scoped per conversation (VS Code only round-trips text
 				// content, so we can't carry a random id; we hash the first user
 				// message). Prevents switching sessions from leaking reasoning.
-				openaiApi.setConvIdFromMessages(messages);
+				openaiApi.setConvIdFromMessages(requestMessages);
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).
 				// Model-agnostic so switching models mid-session keeps replaying reasoning.
-				openaiApi.setCurrentTurnKey(String(messages.length));
-				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
+				openaiApi.setCurrentTurnKey(String(requestMessages.length));
+				const openaiMessages = openaiApi.convertMessages(requestMessages, modelConfig);
 
 				// requestBody
 				let requestBody: Record<string, unknown> = {
@@ -546,7 +551,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					this.llamaSpeed.end();
 					// Streaming overwrote the token usage display; refresh it now that
 					// the request is done (server usage first, history count fallback).
-					this.refreshTokenDisplay(openaiApi, messages, options.tools, model, modelConfig);
+					this.refreshTokenDisplay(openaiApi, requestMessages, options.tools, model, modelConfig);
 				}
 			}
 		} catch (err) {

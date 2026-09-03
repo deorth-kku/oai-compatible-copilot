@@ -322,8 +322,18 @@
 									<label for="modelThinkingBudget">Thinking Budget</label>
 									<div class="field-description">Maximum number of tokens for chain-of-thought output.</div>
 									<input id="modelThinkingBudget" type="number" class="model-input" min="128" />
-								</div>
-							</div>
+								</div>									<div class="field">
+										<label for="modelStripReminderInstructions">Strip Reminder Instructions</label>
+										<div class="field-description">
+											Remove the first &lt;reminderInstructions&gt; block that Copilot injects into every user turn
+											before sending.
+										</div>
+										<select id="modelStripReminderInstructions" class="model-input">
+											<option value="">Default (False)</option>
+											<option value="true">True</option>
+											<option value="false">False</option>
+										</select>
+									</div>							</div>
 							<div class="row">
 								<div class="field">
 									<label for="modelTopK">Top K</label>

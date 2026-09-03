@@ -54,6 +54,7 @@ const modelReasoningEffortInput = document.getElementById("modelReasoningEffort"
 const modelEnableThinkingInput = document.getElementById("modelEnableThinking");
 const modelThinkingBudgetInput = document.getElementById("modelThinkingBudget");
 const modelIncludeReasoningInput = document.getElementById("modelIncludeReasoning");
+const modelStripReminderInstructionsInput = document.getElementById("modelStripReminderInstructions");
 const modelMaxCompletionTokensInput = document.getElementById("modelMaxCompletionTokens");
 const modelOptimizationInput = document.getElementById("modelOptimization");
 const modelReasoningExcludeInput = document.getElementById("modelReasoningExclude");
@@ -544,6 +545,7 @@ function resetModelForm() {
 	modelContextLengthInput.value = 128000;
 	modelMaxTokensInput.value = 4096;
 	modelVisionInput.value = "";
+	modelStripReminderInstructionsInput.value = "";
 	modelApiModeInput.value = "openai";
 	modelTemperatureInput.value = "";
 	modelTopPInput.value = "";
@@ -612,6 +614,9 @@ function collectModelFormData() {
 		thinking_budget: modelThinkingBudgetInput.value ? parseInt(modelThinkingBudgetInput.value) : undefined,
 		include_reasoning_in_request: modelIncludeReasoningInput.value
 			? modelIncludeReasoningInput.value === "true"
+			: undefined,
+		strip_reminder_instructions: modelStripReminderInstructionsInput.value
+			? modelStripReminderInstructionsInput.value === "true"
 			: undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
 			? parseInt(modelMaxCompletionTokensInput.value)
@@ -1194,6 +1199,8 @@ function populateModelForm(model) {
 	modelThinkingBudgetInput.value = model.thinking_budget || "";
 	modelIncludeReasoningInput.value =
 		model.include_reasoning_in_request !== undefined ? String(model.include_reasoning_in_request) : "";
+	modelStripReminderInstructionsInput.value =
+		model.strip_reminder_instructions !== undefined ? String(model.strip_reminder_instructions) : "";
 	modelMaxCompletionTokensInput.value = model.max_completion_tokens || "";
 	// Populate dedicated optimization + supported efforts
 	modelOptimizationInput.value = model.optimization || "";

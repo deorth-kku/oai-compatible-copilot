@@ -112,18 +112,18 @@
 			"title": "OAI Compatible Copilot",
 			"properties": {
 				"oaicopilot.logLevel": {
-				"type": "string",
-				"default": "off",
-				"enum": [
-					"off",
-					"debug",
-					"info",
-					"warn",
-					"error"
-				],
-				"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot/logs/ as JSON lines. Default is 'off' (no logging)."
-			},
-			"oaicopilot.baseUrl": {
+					"type": "string",
+					"default": "off",
+					"enum": [
+						"off",
+						"debug",
+						"info",
+						"warn",
+						"error"
+					],
+					"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot/logs/ as JSON lines. Default is 'off' (no logging)."
+				},
+				"oaicopilot.baseUrl": {
 					"type": "string",
 					"default": "https://router.huggingface.co/v1",
 					"description": "The base URL for the Openai Compatible Inference API. Default value is Hugging Face."
@@ -361,6 +361,11 @@
 								"type": "boolean",
 								"default": true,
 								"description": "Enable Anthropic prompt-caching breakpoints (apiMode='anthropic' only). When true, attaches cache_control={type:'ephemeral'} to the system prompt and the last tool definition, and forwards any in-message cache_control markers emitted by Copilot. Set to false for upstream providers that reject the cache_control field."
+							},
+							"strip_reminder_instructions": {
+								"type": "boolean",
+								"default": false,
+								"description": "Whether to strip the first <reminderInstructions> block that Copilot injects into every user turn before sending the request to the API. Default is false."
 							}
 						},
 						"required": [

@@ -121,6 +121,68 @@ export function mapRole(message: vscode.LanguageModelChatRequestMessage): "user"
 }
 
 /**
+ * Remove the first well-formed `<reminderInstructions>...</reminderInstructions>`
+ * block from the given text.
+ *
+ * Copilot injects a `<reminderInstructions>` block into every user turn. The text
+ * is not well-formed XML, so this is a strict targeted scan (not a full XML
+ * parser):
+ * - Only an exact, case-sensitive, paired block is removed. A non-global regex
+ *   with `String.replace` removes at most one — the first — block; any further
+ *   blocks are left untouched.
+ * - If an opening tag has no matching closing tag, the text is returned
+ *   unchanged.
+ */
+export function stripReminderInstructions(text: string): string {
+	if (!text.includes("<reminderInstructions>")) {
+		return text;
+	}
+	return text.replace(/<reminderInstructions>[\s\S]*?<\/reminderInstructions>/, "");
+}
+
+/**
+ * Return a new message array with the first `<reminderInstructions>` block
+ * removed from user-role message text parts.
+ *
+ * Only `LanguageModelTextPart`s in user-role messages are replaced; all other
+ * parts (data, tool call, tool result, thinking) and non-user messages pass
+ * through by reference. If no text part changes, the original array is returned
+ * unchanged. The input array is never mutated.
+ */
+export function sanitizeUserMessages(
+	messages: readonly vscode.LanguageModelChatRequestMessage[]
+): vscode.LanguageModelChatRequestMessage[] {
+	let changed = false;
+	const out: vscode.LanguageModelChatRequestMessage[] = [];
+	for (const m of messages) {
+		if (mapRole(m) !== "user" || !m.content) {
+			out.push(m);
+			continue;
+		}
+		let messageChanged = false;
+		const parts: unknown[] = [];
+		for (const part of m.content) {
+			if (part instanceof vscode.LanguageModelTextPart) {
+				const stripped = stripReminderInstructions(part.value);
+				if (stripped !== part.value) {
+					messageChanged = true;
+					parts.push(new vscode.LanguageModelTextPart(stripped));
+					continue;
+				}
+			}
+			parts.push(part);
+		}
+		if (messageChanged) {
+			changed = true;
+			out.push({ ...m, content: parts });
+		} else {
+			out.push(m);
+		}
+	}
+	return changed ? out : (messages as vscode.LanguageModelChatRequestMessage[]);
+}
+
+/**
  * Convert VS Code tool definitions to OpenAI function tool definitions.
  * @param options Request options containing tools and toolMode.
  */

@@ -124,6 +124,13 @@ export interface HFModelItem {
 	include_reasoning_in_request?: boolean;
 
 	/**
+	 * Whether to strip the first `<reminderInstructions>` block that Copilot
+	 * injects into every user turn before sending the request to the API.
+	 * Default is false (the block is kept).
+	 */
+	strip_reminder_instructions?: boolean;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".
