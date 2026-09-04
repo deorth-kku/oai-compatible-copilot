@@ -137,7 +137,10 @@ export function stripReminderInstructions(text: string): string {
 	if (!text.includes("<reminderInstructions>")) {
 		return text;
 	}
-	return text.replace(/<reminderInstructions>[\s\S]*?<\/reminderInstructions>/, "");
+	return text.replace(/<reminderInstructions>[\s\S]*?<\/reminderInstructions>/, (match) => {
+		logger.debug("stripReminderInstructions", { stripped: match });
+		return "";
+	});
 }
 
 /**

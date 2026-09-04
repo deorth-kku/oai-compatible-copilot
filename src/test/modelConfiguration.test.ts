@@ -187,7 +187,8 @@ suite("modelConfiguration", () => {
 	test("uses manual extended thinking when enable_thinking + thinking_budget are set", () => {
 		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(
 			{ model: "claude", messages: [], max_tokens: 1024, stream: true },
-			{ ...deepSeekModel, apiMode: "anthropic", enable_thinking: true, thinking_budget: 16000 },
+			// fixture carries reasoning_effort, which would take priority over manual thinking
+			{ ...deepSeekModel, reasoning_effort: undefined, apiMode: "anthropic", enable_thinking: true, thinking_budget: 16000 },
 			undefined
 		) as unknown as Record<string, unknown>;
 
@@ -198,7 +199,8 @@ suite("modelConfiguration", () => {
 		const options = { modelConfiguration: { reasoningEffort: "high" } } as never;
 		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(
 			{ model: "claude", messages: [], max_tokens: 1024, stream: true },
-			{ ...deepSeekModel, apiMode: "anthropic" },
+			// fixture carries reasoning_effort, which would map to adaptive thinking
+			{ ...deepSeekModel, reasoning_effort: undefined, apiMode: "anthropic" },
 			options
 		) as unknown as Record<string, unknown>;
 		const ollamaBody = new OllamaApi("qwen3").prepareRequestBody(
