@@ -76,17 +76,39 @@ button:active {
 .row {
 	display: flex;
 	gap: 10px;
-	align-items: center;
+	align-items: stretch;
 	flex-wrap: wrap;
+	margin-bottom: 10px;
 }
 .row .field {
 	flex: 1;
 	min-width: 150px;
 	margin-bottom: 0;
+	display: flex;
+	flex-direction: column;
 }
 .row input {
 	flex: 1;
 	margin-bottom: 0;
+}
+/* Pin each field's control to the bottom so inputs line up across a
+   row regardless of description length */
+.row .field > input,
+.row .field > select,
+.row .field > textarea {
+	flex: 0 1 auto;
+	margin-top: auto;
+	margin-bottom: 0;
+}
+/* A lone checkbox is smaller than a text input; center it vertically
+   instead of bottom-aligning it */
+.row .field > input[type="checkbox"] {
+	margin-top: auto;
+	margin-bottom: auto;
+}
+.row .field > .input-with-dropdown,
+.row .field > .checkbox-group {
+	margin-top: auto;
 }
 .checkbox {
 	width: 16px;

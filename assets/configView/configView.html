@@ -65,7 +65,7 @@
 					</div>
 					<div class="field">
 						<label for="intervalMs">Retry Interval (ms)</label>
-						<div class="field-description">Interval between retry attempts in milliseconds.</div>
+						<div class="field-description">Starting interval between retry attempts in milliseconds. Retries use 2^n exponential backoff from this base (e.g. 1000, 2000, 4000 ms), capped at 60000 ms.</div>
 						<input id="intervalMs" type="number" min="1" placeholder="1000" />
 					</div>
 					<div class="field">
