@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { countMessageTokens, countToolTokens } from "./provideToken";
+import { formatLlamaUsageReport } from "./llamaSpeed";
 import type { TokenUsage } from "./types";
 
 export function initStatusBar(context: vscode.ExtensionContext): vscode.StatusBarItem {
@@ -128,11 +129,15 @@ export function updateContextStatusBarFromUsage(
 
 	const progressBar = createProgressBar(totalTokenCount, maxTokens);
 	statusBarItem.text = `$(symbol-parameter) ${progressBar}`;
+	// llama.cpp backends (llama-server) enrich the final usage object with
+	// timing/cache fields; render them as a report section when present.
+	const llamaReport = formatLlamaUsageReport(usage);
+	const llamaSection = llamaReport ? `  ── llama.cpp ──\n${llamaReport}\n` : "";
 	statusBarItem.tooltip = `Token Usage: ${formatTokenCount(totalTokenCount)} / ${formatTokenCount(maxTokens)}\n
 ${progressBar}\n
   - Prompt: ${formatTokenCount(promptTokens)}  (${Math.min((promptTokens / maxTokens) * 100, 100).toFixed(1)}%)
   - Completion: ${formatTokenCount(completionTokens)}  (${Math.min((completionTokens / maxTokens) * 100, 100).toFixed(1)}%) \n
-Click to Open Configuration UI`;
+${llamaSection}Click to Open Configuration UI`;
 
 	applyUsageColoring(statusBarItem, totalTokenCount, maxTokens);
 

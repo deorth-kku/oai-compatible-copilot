@@ -238,11 +238,56 @@ export interface TokenUsageDetails {
 }
 
 /**
+ * Standard OpenAI completion token usage details
+ * (reasoning tokens vs. visible tokens).
+ */
+export interface CompletionTokenUsageDetails {
+	reasoning_tokens?: number;
+	visible_tokens?: number;
+}
+
+/**
+ * llama.cpp timing and cache statistics. llama-server emits these in a
+ * `timings` object that is a SIBLING of `usage` in the final streamed chunk
+ * (only when the corresponding server log flags are enabled). The provider
+ * attaches it to the captured usage object. `prompt_n`/`prompt_ms` cover
+ * only the non-cached portion of the prompt (the cached prefix is served
+ * from the cache).
+ */
+export interface LlamaTimings {
+	prompt_n?: number;
+	prompt_ms?: number;
+	prompt_per_token_ms?: number;
+	prompt_per_second?: number;
+	predicted_n?: number;
+	predicted_ms?: number;
+	predicted_per_token_ms?: number;
+	predicted_per_second?: number;
+	cache_n?: number;
+	cache_lcp_n?: number;
+	cache_planned_n?: number;
+	cache_reprocessed_n?: number;
+	cache_source?: string;
+	cache_reason?: string;
+	// llama.cpp aliases for prompt/completion token counts
+	input_tokens?: number;
+	output_tokens?: number;
+}
+
+/**
  * Standard OpenAI token usage structure.
+ *
+ * When pointed at a llama.cpp llama-server, the final chunk carries a
+ * `timings` object (sibling of `usage`) with llama.cpp-specific timing and
+ * cache stats; the provider attaches it to the captured usage object
+ * (absent on other backends).
  */
 export interface TokenUsage {
 	prompt_tokens: number;
 	completion_tokens: number;
 	total_tokens: number;
 	prompt_tokens_details?: TokenUsageDetails;
+	completion_tokens_details?: CompletionTokenUsageDetails;
+	// llama.cpp timing/cache stats, nested in a `timings` object
+	timings?: LlamaTimings;
 }

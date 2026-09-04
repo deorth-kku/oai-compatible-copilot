@@ -7,7 +7,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem, TokenUsage, ModelConversionConfig } from "../types";
+import type { HFModelItem, TokenUsage, LlamaTimings, ModelConversionConfig } from "../types";
 import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
 
 import type {
@@ -386,7 +386,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 						const parsed = JSON.parse(data);
 						// Capture usage from the final chunk (stream_options.include_usage)
 						if (parsed.usage && typeof parsed.usage === "object") {
-							this._usage = parsed.usage as TokenUsage;
+							const usage = parsed.usage as TokenUsage;
+							// llama-server emits `timings` as a SIBLING of `usage` in the
+							// final chunk (not nested inside it); attach it to the usage
+							// object so the status bar report can render it.
+							if (parsed.timings && typeof parsed.timings === "object") {
+								usage.timings = parsed.timings as LlamaTimings;
+							}
+							this._usage = usage;
 							logger.debug("usage.capture", { modelId: this._modelId, usage: this._usage });
 						}
 						// Capture optional llama.cpp speed fields (absent on other backends)

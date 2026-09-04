@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { TokenUsage } from "./types";
 
 /**
  * Live llama.cpp PP/TG speed display.
@@ -50,6 +51,111 @@ export function formatPpLine(processed: number, cache: number, total: number, ti
 export function formatTgLine(perSecond: number, n: number): string {
 	const rate = n >= 8 ? `${perSecond.toFixed(1)} t/s` : "— t/s";
 	return `TG ${rate} ${n} tok`;
+}
+
+/**
+ * Format a duration in milliseconds: `271.9 ms` below one second, otherwise
+ * seconds with two decimals (e.g. `5.81 s`).
+ */
+export function formatDurationMs(ms: number): string {
+	if (ms < 1000) {
+		return `${ms.toFixed(1)} ms`;
+	}
+	return `${(ms / 1000).toFixed(2)} s`;
+}
+
+/**
+ * Build the detailed llama.cpp usage report for the final status bar tooltip
+ * (cache hit rate, prefill and decode timings). Returns undefined when the
+ * usage object carries no `timings` object, or it lacks `prompt_ms`/
+ * `predicted_ms` (non-llama.cpp backend, or the fields are disabled).
+ *
+ * llama.cpp's `prompt_n`/`prompt_ms` cover only the non-cached portion of the
+ * prompt, so the prefill line reports real work. The cache hit rate is
+ * computed from `prompt_tokens_details.cached_tokens`, falling back to
+ * `timings.cache_n`.
+ */
+export function formatLlamaUsageReport(usage: TokenUsage): string | undefined {
+	const timings = usage.timings;
+	if (!timings) {
+		return undefined;
+	}
+	const promptMs = num(timings.prompt_ms);
+	const predictedMs = num(timings.predicted_ms);
+	if (promptMs === undefined || predictedMs === undefined) {
+		return undefined;
+	}
+
+	const lines: string[] = [];
+
+	// Cache hit rate + provenance
+	const promptTokens = num(usage.prompt_tokens);
+	const cached = num(usage.prompt_tokens_details?.cached_tokens) ?? num(timings.cache_n);
+	if (cached !== undefined && promptTokens !== undefined && promptTokens > 0) {
+		const cacheParts = [`${Math.round(cached)}/${promptTokens} (${((cached / promptTokens) * 100).toFixed(1)}%)`];
+		if (typeof timings.cache_source === "string" && timings.cache_source.length > 0) {
+			cacheParts.push(timings.cache_source);
+		}
+		if (typeof timings.cache_reason === "string" && timings.cache_reason.length > 0) {
+			cacheParts.push(timings.cache_reason);
+		}
+		const reprocessed = num(timings.cache_reprocessed_n);
+		if (reprocessed !== undefined && reprocessed > 0) {
+			cacheParts.push(`reprocessed ${reprocessed}`);
+		}
+		lines.push(`  - Cache: ${cacheParts.join(" · ")}`);
+	}
+
+	// Prefill (prompt processing of the non-cached portion)
+	const promptN = num(timings.prompt_n);
+	const promptRate =
+		num(timings.prompt_per_second) ?? (promptN !== undefined && promptMs > 0 ? promptN / (promptMs / 1000) : undefined);
+	const prefillParts: string[] = [];
+	if (promptN !== undefined) {
+		prefillParts.push(`${promptN} tok`);
+	}
+	prefillParts.push(formatDurationMs(promptMs));
+	if (promptRate !== undefined) {
+		prefillParts.push(`${promptRate.toFixed(1)} t/s`);
+	}
+	lines.push(`  - Prefill: ${prefillParts.join(" · ")}`);
+
+	// Decode (token generation)
+	const predictedN = num(timings.predicted_n) ?? num(usage.completion_tokens);
+	const predictedRate =
+		num(timings.predicted_per_second) ??
+		(predictedN !== undefined && predictedMs > 0 ? predictedN / (predictedMs / 1000) : undefined);
+	const decodeParts: string[] = [];
+	if (predictedN !== undefined) {
+		decodeParts.push(`${predictedN} tok`);
+	}
+	decodeParts.push(formatDurationMs(predictedMs));
+	if (predictedRate !== undefined) {
+		decodeParts.push(`${predictedRate.toFixed(1)} t/s`);
+	}
+	lines.push(`  - Decode: ${decodeParts.join(" · ")}`);
+
+	// Reasoning vs. visible tokens
+	const details = usage.completion_tokens_details;
+	if (details) {
+		const detailParts: string[] = [];
+		const reasoning = num(details.reasoning_tokens);
+		const visible = num(details.visible_tokens);
+		if (reasoning !== undefined) {
+			detailParts.push(`Reasoning: ${reasoning}`);
+		}
+		if (visible !== undefined) {
+			detailParts.push(`Visible: ${visible}`);
+		}
+		if (detailParts.length > 0) {
+			lines.push(`  - ${detailParts.join(" · ")}`);
+		}
+	}
+
+	// Total wall time (prefill + decode)
+	lines.push(`  - Total: ${formatDurationMs(promptMs + predictedMs)}`);
+
+	return lines.join("\n");
 }
 
 /**
