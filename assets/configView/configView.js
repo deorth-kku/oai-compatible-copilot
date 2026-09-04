@@ -18,6 +18,7 @@ const baseUrlInput = document.getElementById("baseUrl");
 const apiKeyInput = document.getElementById("apiKey");
 const delayInput = document.getElementById("delay");
 const readFileLinesInput = document.getElementById("readFileLines");
+const stripTargetSessionLogInput = document.getElementById("stripTargetSessionLog");
 const retryEnabledInput = document.getElementById("retryEnabled");
 const maxAttemptsInput = document.getElementById("maxAttempts");
 const intervalMsInput = document.getElementById("intervalMs");
@@ -97,6 +98,7 @@ document.getElementById("saveBase").addEventListener("click", () => {
 		apiKey: apiKeyInput.value,
 		delay: parseInt(delayInput.value) || 0,
 		readFileLines: parseInt(readFileLinesInput.value) || 0,
+		stripTargetSessionLog: stripTargetSessionLogInput.checked,
 		retry: retry,
 		commitModel: commitModelInput.value,
 		commitLanguage: commitLanguageInput.value,
@@ -295,6 +297,7 @@ window.addEventListener("message", (event) => {
 			apiKeyInput.value = apiKey || "";
 			delayInput.value = state.delay;
 			readFileLinesInput.value = message.payload.readFileLines || 0;
+			stripTargetSessionLogInput.checked = message.payload.stripTargetSessionLog !== false;
 			retryEnabledInput.checked = state.retry.enabled !== false;
 			maxAttemptsInput.value = state.retry.max_attempts || 3;
 			intervalMsInput.value = state.retry.interval_ms || 1000;

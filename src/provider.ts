@@ -14,7 +14,7 @@ import type { HFModelItem, ModelConversionConfig } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
-import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels, sanitizeUserMessages } from "./utils";
+import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels, sanitizeMessages } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
@@ -168,8 +168,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Per-model opt-in: strip the first <reminderInstructions> block that Copilot
 			// injects into every user turn before sending the request upstream.
+			const stripReminder = um?.strip_reminder_instructions === true;
+			// Global opt-in (default true): strip the per-session
+			// VSCODE_TARGET_SESSION_LOG line from the system prompt so the stable
+			// portion of the system prompt stays cacheable across sessions.
+			const stripSessionLog = config.get<boolean>("oaicopilot.stripTargetSessionLog", true);
 			const requestMessages =
-				um?.strip_reminder_instructions === true ? sanitizeUserMessages(messages) : messages;
+				stripReminder || stripSessionLog
+					? sanitizeMessages(messages, { stripReminder, stripSessionLog })
+					: messages;
 
 			// Update Token Usage
 			updateContextStatusBar(requestMessages, options.tools, model, this.statusBarItem, modelConfig);
@@ -320,9 +327,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const statefulModelId = parsedModelId.baseId;
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text
-				// content, so we can't carry a random id; we hash the first user
-				// message). Prevents switching sessions from leaking reasoning.
-				openaiResponsesApi.setConvIdFromMessages(requestMessages);
+				// content, so we can't carry a random id). We hash the *original*
+				// system prompt, which embeds a per-session UUID, so it is unique
+				// per session. This must use the pre-sanitize `messages` — the
+				// VSCODE_TARGET_SESSION_LOG line is stripped from `requestMessages`,
+				// which would make the id collide across sessions.
+				openaiResponsesApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// in the full history (append-only), so it matches the replay key.
 				// Model-agnostic so switching models mid-session keeps replaying reasoning.
@@ -500,9 +510,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const openaiApi = new OpenaiApi(model.id);
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text
-				// content, so we can't carry a random id; we hash the first user
-				// message). Prevents switching sessions from leaking reasoning.
-				openaiApi.setConvIdFromMessages(requestMessages);
+				// content, so we can't carry a random id). We hash the *original*
+				// system prompt, which embeds a per-session UUID, so it is unique
+				// per session. This must use the pre-sanitize `messages` — the
+				// VSCODE_TARGET_SESSION_LOG line is stripped from `requestMessages`,
+				// which would make the id collide across sessions.
+				openaiApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).
 				// Model-agnostic so switching models mid-session keeps replaying reasoning.

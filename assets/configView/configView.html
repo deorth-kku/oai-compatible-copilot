@@ -41,6 +41,14 @@
 					</div>
 					<input id="readFileLines" type="number" min="0" placeholder="0" />
 				</div>
+				<div class="field">
+					<label for="stripTargetSessionLog">Strip Target Session Log</label>
+					<div class="field-description">
+						Strip the per-session VSCODE_TARGET_SESSION_LOG line from the system prompt so the stable portion stays
+						cacheable across sessions.
+					</div>
+					<input id="stripTargetSessionLog" type="checkbox" checked />
+				</div>
 			</div>
 			<div class="retry-config">
 				<h3>Retry Configuration</h3>

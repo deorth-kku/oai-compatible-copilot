@@ -9,7 +9,7 @@ import {
 	CancellationToken,
 } from "vscode";
 import { HFModelItem, CustomDataPartMimeTypes, TokenUsage } from "./types";
-import { tryParseJSONObject } from "./utils";
+import { tryParseJSONObject, mapRole } from "./utils";
 import { logger } from "./logger";
 import { VersionManager } from "./versionManager";
 
@@ -207,9 +207,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Per-conversation id derived from the request history. VS Code only
 	 * round-trips plain text content (any extra data-parts are dropped — a VS Code
 	 * bug), so we cannot carry a random session id forward. Instead we derive the
-	 * id from the first user message's text content, which is stable for a given
-	 * conversation and differs between conversations. This scopes the reasoning
-	 * cache so sessions don't leak into each other ("串台").
+	 * id from the *original* (pre-sanitize) system prompt, which Copilot seeds
+	 * with a per-session UUID (the VSCODE_TARGET_SESSION_LOG line), so it is
+	 * unique per session and stable across turns of the same session. This scopes
+	 * the reasoning cache so sessions don't leak into each other ("串台").
 	 */
 	protected _convId = "";
 
@@ -218,6 +219,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * the provider before `convertMessages`/`processStreamingResponse`. The id is
 	 * recomputed every turn from the (append-only) history, so it stays aligned
 	 * across turns of the same conversation without any round-tripped state.
+	 *
+	 * IMPORTANT: pass the *original* messages (before any sanitization such as
+	 * stripping VSCODE_TARGET_SESSION_LOG), otherwise the per-session UUID line is
+	 * gone and the id would collide across sessions.
 	 */
 	setConvIdFromMessages(messages: readonly LanguageModelChatRequestMessage[]): void {
 		this._convId = CommonApi.computeConvId(messages);
@@ -226,21 +231,21 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	/**
 	 * Stable conversation id derived from the request history.
 	 *
-	 * The first user message is Copilot's injected environment/workspace context
-	 * (system-like, near-identical across sessions in the same workspace), so it
-	 * cannot distinguish conversations. We use the **second** user message — the
-	 * user's actual prompt — which is stable for a conversation and differs between
-	 * them. Only when there is no second user message (e.g. a brand-new single-turn
-	 * request before the first prompt has been recorded) do we fall back to the
-	 * first user message.
+	 * Preferred: the first non-empty **system**-role message. Copilot injects a
+	 * per-session UUID into the system prompt (the VSCODE_TARGET_SESSION_LOG
+	 * line), so it is unique per session and stable across that session's turns.
+	 *
+	 * Fallback (when there is no system message): the **second** user message —
+	 * the user's actual prompt — which is stable for a conversation and differs
+	 * between them; then the first user message; then a structural signature so
+	 * distinct histories still get distinct ids.
 	 */
 	private static computeConvId(messages: readonly LanguageModelChatRequestMessage[]): string {
+		let systemText = "";
 		let userCount = 0;
 		let firstUserText = "";
+		let secondUserText = "";
 		for (const m of messages) {
-			if (m.role !== vscode.LanguageModelChatMessageRole.User) {
-				continue;
-			}
 			const text = (m.content ?? [])
 				.filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
 				.map((p) => p.value)
@@ -249,16 +254,39 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			if (!text) {
 				continue;
 			}
-			userCount++;
-			if (userCount === 1) {
-				firstUserText = text;
-			} else if (userCount === 2) {
-				// The user's real prompt — this is what distinguishes conversations.
-				return CommonApi.hashString(text);
+			// mapRole returns "system" for anything that is neither User nor
+			// Assistant (the shipped @types/vscode enum only defines User/Assistant,
+			// while the runtime System role is 3).
+			switch (mapRole(m)) {
+				case "system":
+					if (!systemText) {
+						systemText = text;
+					}
+					break;
+				case "user":
+					userCount++;
+					if (userCount === 1) {
+						firstUserText = text;
+					} else if (userCount === 2) {
+						// The user's real prompt — this is what distinguishes conversations.
+						secondUserText = text;
+					}
+					break;
+				case "assistant":
+					// Assistant turns don't contribute to the conversation id.
+					break;
 			}
 		}
-		// Fall back to the first (injected) user message, then to a structural
-		// signature so distinct histories still get distinct ids.
+		// Preferred: the system prompt (per-session UUID makes it unique per session).
+		if (systemText) {
+			return CommonApi.hashString(systemText);
+		}
+		// Fallback: the user's real prompt (second user message), then the first
+		// (injected) user message, then a structural signature so distinct
+		// histories still get distinct ids.
+		if (secondUserText) {
+			return CommonApi.hashString(secondUserText);
+		}
 		if (firstUserText) {
 			return CommonApi.hashString(firstUserText);
 		}

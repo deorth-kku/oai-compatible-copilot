@@ -144,21 +144,70 @@ export function stripReminderInstructions(text: string): string {
 }
 
 /**
- * Return a new message array with the first `<reminderInstructions>` block
- * removed from user-role message text parts.
+ * Remove the first `VSCODE_TARGET_SESSION_LOG:` line from the given text.
  *
- * Only `LanguageModelTextPart`s in user-role messages are replaced; all other
- * parts (data, tool call, tool result, thinking) and non-user messages pass
+ * Copilot injects a `- VSCODE_TARGET_SESSION_LOG: <path>` line into the system
+ * prompt of every chat session. The path embeds a per-session UUID, so its
+ * presence makes the whole system prompt differ between sessions and busts the
+ * upstream prompt cache on every new session. Stripping this line (while the
+ * conversation id is still computed from the *original* system prompt — see
+ * `CommonApi.computeConvId`) lets the stable portion of the system prompt stay
+ * cacheable across sessions.
+ *
+ * Only the first occurrence is removed (non-global regex), and the whole line —
+ * including its trailing newline — is dropped. Case-sensitive.
+ */
+export function stripTargetSessionLog(text: string): string {
+	if (!text.includes("VSCODE_TARGET_SESSION_LOG:")) {
+		return text;
+	}
+	return text.replace(/^[^\S\n]*[-*]?[^\S\n]*VSCODE_TARGET_SESSION_LOG:[^\n]*\n?/m, (match) => {
+		logger.debug("stripTargetSessionLog", { stripped: match });
+		return "";
+	});
+}
+
+/**
+ * Options controlling which per-message sanitizations {@link sanitizeMessages}
+ * applies.
+ */
+export interface SanitizeMessagesOptions {
+	/** Strip the first `<reminderInstructions>` block from user-role text parts. */
+	stripReminder?: boolean;
+	/** Strip the first `VSCODE_TARGET_SESSION_LOG:` line from system-role text parts. */
+	stripSessionLog?: boolean;
+}
+
+/**
+ * Return a new message array with per-role sanitizations applied to text parts.
+ *
+ * In a single pass over the messages this can:
+ * - strip the first `<reminderInstructions>` block from **user**-role text parts
+ *   (when `options.stripReminder` is set), and
+ * - strip the first `VSCODE_TARGET_SESSION_LOG:` line from **system**-role text
+ *   parts (when `options.stripSessionLog` is set).
+ *
+ * Only `LanguageModelTextPart`s in the matching role are replaced; all other
+ * parts (data, tool call, tool result, thinking) and non-matching messages pass
  * through by reference. If no text part changes, the original array is returned
  * unchanged. The input array is never mutated.
  */
-export function sanitizeUserMessages(
-	messages: readonly vscode.LanguageModelChatRequestMessage[]
+export function sanitizeMessages(
+	messages: readonly vscode.LanguageModelChatRequestMessage[],
+	options: SanitizeMessagesOptions
 ): vscode.LanguageModelChatRequestMessage[] {
+	const stripReminder = options.stripReminder === true;
+	const stripSessionLog = options.stripSessionLog === true;
+	if (!stripReminder && !stripSessionLog) {
+		return messages as vscode.LanguageModelChatRequestMessage[];
+	}
 	let changed = false;
 	const out: vscode.LanguageModelChatRequestMessage[] = [];
 	for (const m of messages) {
-		if (mapRole(m) !== "user" || !m.content) {
+		const role = mapRole(m);
+		const wantReminder = stripReminder && role === "user";
+		const wantSessionLog = stripSessionLog && role === "system";
+		if ((!wantReminder && !wantSessionLog) || !m.content) {
 			out.push(m);
 			continue;
 		}
@@ -166,10 +215,16 @@ export function sanitizeUserMessages(
 		const parts: unknown[] = [];
 		for (const part of m.content) {
 			if (part instanceof vscode.LanguageModelTextPart) {
-				const stripped = stripReminderInstructions(part.value);
-				if (stripped !== part.value) {
+				let value = part.value;
+				if (wantReminder) {
+					value = stripReminderInstructions(value);
+				}
+				if (wantSessionLog) {
+					value = stripTargetSessionLog(value);
+				}
+				if (value !== part.value) {
 					messageChanged = true;
-					parts.push(new vscode.LanguageModelTextPart(stripped));
+					parts.push(new vscode.LanguageModelTextPart(value));
 					continue;
 				}
 			}
