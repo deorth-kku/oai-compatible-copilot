@@ -135,6 +135,17 @@ export function formatLlamaUsageReport(usage: TokenUsage): string | undefined {
 	}
 	lines.push(`  - Decode: ${decodeParts.join(" · ")}`);
 
+	// Speculative decoding draft acceptance (llama.cpp only)
+	const draftN = num(timings.draft_n);
+	const draftAccepted = num(timings.draft_n_accepted);
+	if (draftN !== undefined && draftAccepted !== undefined) {
+		const draftParts = [`${draftN} proposed`, `${draftAccepted} accepted`];
+		if (draftN > 0) {
+			draftParts.push(`${((draftAccepted / draftN) * 100).toFixed(1)}%`);
+		}
+		lines.push(`  - Draft: ${draftParts.join(" · ")}`);
+	}
+
 	// Reasoning vs. visible tokens
 	const details = usage.completion_tokens_details;
 	if (details) {

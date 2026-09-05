@@ -176,6 +176,45 @@ suite("formatLlamaUsageReport", () => {
 		]);
 	});
 
+	test("draft model stats render a Draft line", () => {
+		const usage: TokenUsage = {
+			prompt_tokens: 104948,
+			completion_tokens: 176,
+			total_tokens: 105124,
+			prompt_tokens_details: { cached_tokens: 104254 },
+			timings: {
+				cache_n: 104254,
+				prompt_n: 694,
+				prompt_ms: 2977.98,
+				prompt_per_second: 233.04387537861234,
+				predicted_n: 176,
+				predicted_ms: 12539.596,
+				predicted_per_second: 13.95579251516556,
+				draft_n: 32,
+				draft_n_accepted: 9,
+			},
+		};
+
+		assert.deepStrictEqual(formatLlamaUsageReport(usage)?.split("\n"), [
+			"  - Cache: 104254/104948 (99.3%)",
+			"  - Prefill: 694 tok · 2.98 s · 233.0 t/s",
+			"  - Decode: 176 tok · 12.54 s · 14.0 t/s",
+			"  - Draft: 32 proposed · 9 accepted · 28.1%",
+			"  - Total: 15.52 s",
+		]);
+	});
+
+	test("only draft_n (no accepted count) → no Draft line", () => {
+		const usage: TokenUsage = {
+			prompt_tokens: 100,
+			completion_tokens: 10,
+			total_tokens: 110,
+			timings: { prompt_ms: 200, predicted_ms: 1200, draft_n: 32 },
+		};
+
+		assert.ok(!formatLlamaUsageReport(usage)?.includes("Draft"), String(formatLlamaUsageReport(usage)));
+	});
+
 	test("cache hit rate falls back to cache_n", () => {
 		const usage: TokenUsage = {
 			prompt_tokens: 1000,
