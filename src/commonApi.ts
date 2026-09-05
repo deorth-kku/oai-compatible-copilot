@@ -221,8 +221,9 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * across turns of the same conversation without any round-tripped state.
 	 *
 	 * IMPORTANT: pass the *original* messages (before any sanitization such as
-	 * stripping VSCODE_TARGET_SESSION_LOG), otherwise the per-session UUID line is
-	 * gone and the id would collide across sessions.
+	 * splitting the system prompt), otherwise the per-session UUID line
+	 * (VSCODE_TARGET_SESSION_LOG) is no longer in the first system message and
+	 * the id would collide across sessions.
 	 */
 	setConvIdFromMessages(messages: readonly LanguageModelChatRequestMessage[]): void {
 		this._convId = CommonApi.computeConvId(messages);

@@ -472,11 +472,6 @@
 					"minimum": 0,
 					"maximum": 100000,
 					"description": "Maximum number of reasoning replay entries to persist across sessions (LRU). 0 means unbounded. Each entry is one assistant turn's reasoning trace, keyed per conversation and model. Higher values improve multi-turn reasoning replay after window reload but use more globalStorage."
-				},
-				"oaicopilot.stripTargetSessionLog": {
-					"type": "boolean",
-					"default": true,
-					"description": "Strip the per-session VSCODE_TARGET_SESSION_LOG line from the system prompt before sending the request upstream. The line embeds a per-session UUID that otherwise busts the upstream prompt cache on every new session. The conversation id is still derived from the original (pre-strip) system prompt, so reasoning replay stays scoped per session."
 				}
 			}
 		}

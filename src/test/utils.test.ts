@@ -1,6 +1,6 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { normalizeUserModels, sanitizeMessages, stripReminderInstructions, stripTargetSessionLog } from "../utils";
+import { normalizeUserModels, sanitizeMessages, stripReminderInstructions } from "../utils";
 import type { HFModelItem } from "../types";
 
 suite("normalizeUserModels migration", () => {
@@ -82,43 +82,6 @@ suite("stripReminderInstructions", () => {
 	});
 });
 
-suite("stripTargetSessionLog", () => {
-	test("removes a unix-path line, preserving surrounding lines", () => {
-		const text = "before\n- VSCODE_TARGET_SESSION_LOG: /home/u/.vscode-server/data/x/d4da3cfa\nafter";
-		assert.strictEqual(stripTargetSessionLog(text), "before\nafter");
-	});
-
-	test("removes a windows-path line", () => {
-		const text = "before\n- VSCODE_TARGET_SESSION_LOG: C:\\Users\\u\\AppData\\x\nafter";
-		assert.strictEqual(stripTargetSessionLog(text), "before\nafter");
-	});
-
-	test("removes a line without a leading bullet", () => {
-		const text = "before\nVSCODE_TARGET_SESSION_LOG: /tmp/x\nafter";
-		assert.strictEqual(stripTargetSessionLog(text), "before\nafter");
-	});
-
-	test("removes a line with a * bullet", () => {
-		const text = "before\n* VSCODE_TARGET_SESSION_LOG: /tmp/x\nafter";
-		assert.strictEqual(stripTargetSessionLog(text), "before\nafter");
-	});
-
-	test("removes a line with no trailing newline (last line)", () => {
-		const text = "before\n- VSCODE_TARGET_SESSION_LOG: /tmp/x";
-		assert.strictEqual(stripTargetSessionLog(text), "before\n");
-	});
-
-	test("is a no-op when the marker is absent", () => {
-		const text = "hello VSCODE_TARGET_SESSION_LOG world";
-		assert.strictEqual(stripTargetSessionLog(text), text);
-	});
-
-	test("is case-sensitive (different case is not removed)", () => {
-		const text = "- vscode_target_session_log: /tmp/x";
-		assert.strictEqual(stripTargetSessionLog(text), text);
-	});
-});
-
 suite("sanitizeMessages", () => {
 	const userMsg = (value: string): vscode.LanguageModelChatRequestMessage => ({
 		role: vscode.LanguageModelChatMessageRole.User,
@@ -158,7 +121,7 @@ suite("sanitizeMessages", () => {
 	test("returns the original array when both flags are false (no copy)", () => {
 		const msgs = [
 			userMsg("u<reminderInstructions>x</reminderInstructions>u"),
-			systemMsg("sVSCODE_TARGET_SESSION_LOG: /x\ns"),
+			systemMsg("stable</memoryInstructions>tail"),
 		];
 		assert.strictEqual(sanitizeMessages(msgs, {}), msgs);
 	});
@@ -184,21 +147,74 @@ suite("sanitizeMessages", () => {
 		assert.strictEqual(out[0].content[1], dataPart);
 	});
 
-	test("strips user reminder and system session-log in one pass", () => {
-		const system = systemMsg("A\n- VSCODE_TARGET_SESSION_LOG: /tmp/x/d4da3cfa\nB");
-		const user = userMsg("u<reminderInstructions>x</reminderInstructions>u");
-		const out = sanitizeMessages([system, user], { stripReminder: true, stripSessionLog: true });
-		assert.strictEqual((out[0].content[0] as vscode.LanguageModelTextPart).value, "A\nB");
-		assert.strictEqual((out[1].content[0] as vscode.LanguageModelTextPart).value, "uu");
+	test("splits the first system message at </memoryInstructions> into a system + user message", () => {
+		const system = systemMsg("stable prefix</memoryInstructions>\n<instructions>\ntail section\n</instructions>");
+		const out = sanitizeMessages([system], { splitSystemPrompt: true });
+		assert.strictEqual(out.length, 2);
+		assert.strictEqual((out[0].content[0] as vscode.LanguageModelTextPart).value, "stable prefix</memoryInstructions>");
+		assert.strictEqual(
+			(out[1].content[0] as vscode.LanguageModelTextPart).value,
+			"<instructions>\ntail section\n</instructions>"
+		);
+		// The remainder becomes a user message (a second system message would be
+		// merged back by llama.cpp's jinja template).
+		assert.strictEqual(out[1].role, vscode.LanguageModelChatMessageRole.User);
 	});
 
-	test("stripSessionLog only affects system messages (user session-log line untouched)", () => {
-		const user = userMsg("- VSCODE_TARGET_SESSION_LOG: /tmp/x");
-		const out = sanitizeMessages([user], { stripSessionLog: true });
-		assert.strictEqual(
-			(out[0].content[0] as vscode.LanguageModelTextPart).value,
-			"- VSCODE_TARGET_SESSION_LOG: /tmp/x"
-		);
+	test("splits at the FIRST marker occurrence only", () => {
+		const system = systemMsg("A</memoryInstructions>B</memoryInstructions>C");
+		const out = sanitizeMessages([system], { splitSystemPrompt: true });
+		assert.strictEqual(out.length, 2);
+		assert.strictEqual((out[0].content[0] as vscode.LanguageModelTextPart).value, "A</memoryInstructions>");
+		assert.strictEqual((out[1].content[0] as vscode.LanguageModelTextPart).value, "B</memoryInstructions>C");
+	});
+
+	test("returns the original array when the system message has no marker", () => {
+		const msgs = [systemMsg("no marker here")];
+		assert.strictEqual(sanitizeMessages(msgs, { splitSystemPrompt: true }), msgs);
+	});
+
+	test("does not split when the remainder after the marker is empty", () => {
+		const msgs = [systemMsg("stable prefix</memoryInstructions>  ")];
+		assert.strictEqual(sanitizeMessages(msgs, { splitSystemPrompt: true }), msgs);
+	});
+
+	test("does not split a system message with multiple parts", () => {
+		const multi = {
+			role: SYSTEM_ROLE,
+			name: undefined,
+			content: [
+				new vscode.LanguageModelTextPart("A</memoryInstructions>"),
+				new vscode.LanguageModelTextPart("B"),
+			],
+		} as vscode.LanguageModelChatRequestMessage;
+		const msgs = [multi];
+		assert.strictEqual(sanitizeMessages(msgs, { splitSystemPrompt: true }), msgs);
+	});
+
+	test("only the FIRST system message is split (later system messages untouched)", () => {
+		const first = systemMsg("A</memoryInstructions>B");
+		const second = systemMsg("C</memoryInstructions>D");
+		const out = sanitizeMessages([first, second], { splitSystemPrompt: true });
+		assert.strictEqual(out.length, 3);
+		assert.strictEqual((out[0].content[0] as vscode.LanguageModelTextPart).value, "A</memoryInstructions>");
+		assert.strictEqual((out[1].content[0] as vscode.LanguageModelTextPart).value, "B");
+		assert.strictEqual(out[2], second);
+	});
+
+	test("never splits user or assistant messages", () => {
+		const msgs = [userMsg("u</memoryInstructions>u"), assistantMsg("a</memoryInstructions>a")];
+		assert.strictEqual(sanitizeMessages(msgs, { splitSystemPrompt: true }), msgs);
+	});
+
+	test("applies stripReminder and splitSystemPrompt in one pass", () => {
+		const system = systemMsg("A</memoryInstructions>B");
+		const user = userMsg("u<reminderInstructions>x</reminderInstructions>u");
+		const out = sanitizeMessages([system, user], { stripReminder: true, splitSystemPrompt: true });
+		assert.strictEqual(out.length, 3);
+		assert.strictEqual((out[0].content[0] as vscode.LanguageModelTextPart).value, "A</memoryInstructions>");
+		assert.strictEqual((out[1].content[0] as vscode.LanguageModelTextPart).value, "B");
+		assert.strictEqual((out[2].content[0] as vscode.LanguageModelTextPart).value, "uu");
 	});
 
 	test("stripReminder does not affect system messages (system reminder block untouched)", () => {

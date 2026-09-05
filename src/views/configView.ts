@@ -9,7 +9,6 @@ interface InitPayload {
 	apiKey: string;
 	delay: number;
 	readFileLines: number;
-	stripTargetSessionLog: boolean;
 	retry: {
 		enabled?: boolean;
 		max_attempts?: number;
@@ -39,7 +38,6 @@ interface ExportConfig {
 	models: HFModelItem[];
 	providerKeys: Record<string, string>;
 	readFileLines: number;
-	stripTargetSessionLog: boolean;
 }
 
 type IncomingMessage =
@@ -50,7 +48,6 @@ type IncomingMessage =
 			apiKey: string;
 			delay: number;
 			readFileLines: number;
-			stripTargetSessionLog: boolean;
 			retry: { enabled?: boolean; max_attempts?: number; interval_ms?: number; status_codes?: number[] };
 			commitModel: string;
 			commitLanguage: string;
@@ -177,7 +174,6 @@ export class ConfigViewPanel {
 					message.apiKey,
 					message.delay,
 					message.readFileLines,
-					message.stripTargetSessionLog,
 					message.retry,
 					message.commitModel,
 					message.commitLanguage
@@ -287,13 +283,11 @@ export class ConfigViewPanel {
 		const commitModel = foundModel ? `${foundModel.id}${foundModel.configId ? "::" + foundModel.configId : ""}` : "";
 		const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
 		const readFileLines = config.get<number>("oaicopilot.readFileLines", 0);
-		const stripTargetSessionLog = config.get<boolean>("oaicopilot.stripTargetSessionLog", true);
 		const payload: InitPayload = {
 			baseUrl,
 			apiKey,
 			delay,
 			readFileLines,
-			stripTargetSessionLog,
 			retry,
 			commitModel,
 			commitLanguage,
@@ -308,7 +302,6 @@ export class ConfigViewPanel {
 		rawApiKey: string,
 		delay: number,
 		readFileLines: number,
-		stripTargetSessionLog: boolean,
 		retry: { enabled?: boolean; max_attempts?: number; interval_ms?: number; status_codes?: number[] },
 		commitModel: string,
 		commitLanguage: string
@@ -319,7 +312,6 @@ export class ConfigViewPanel {
 		await config.update("oaicopilot.baseUrl", baseUrl, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.delay", delay, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.readFileLines", readFileLines, vscode.ConfigurationTarget.Global);
-		await config.update("oaicopilot.stripTargetSessionLog", stripTargetSessionLog, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.retry", retry, vscode.ConfigurationTarget.Global);
 		await config.update("oaicopilot.commitLanguage", commitLanguage, vscode.ConfigurationTarget.Global);
 		if (apiKey) {
@@ -582,7 +574,6 @@ export class ConfigViewPanel {
 			});
 			const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
 			const readFileLines = config.get<number>("oaicopilot.readFileLines", 0);
-			const stripTargetSessionLog = config.get<boolean>("oaicopilot.stripTargetSessionLog", true);
 			const models = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
 
 			const foundModel = models.find((model) => model.useForCommitGeneration === true);
@@ -609,7 +600,6 @@ export class ConfigViewPanel {
 				commitModel,
 				models,
 				readFileLines,
-				stripTargetSessionLog,
 				providerKeys,
 			};
 
@@ -664,7 +654,6 @@ export class ConfigViewPanel {
 			await config.update("oaicopilot.delay", importData.delay, vscode.ConfigurationTarget.Global);
 			await config.update("oaicopilot.retry", importData.retry, vscode.ConfigurationTarget.Global);
 			await config.update("oaicopilot.readFileLines", importData.readFileLines, vscode.ConfigurationTarget.Global);
-			await config.update("oaicopilot.stripTargetSessionLog", importData.stripTargetSessionLog, vscode.ConfigurationTarget.Global);
 			await config.update("oaicopilot.commitLanguage", importData.commitLanguage, vscode.ConfigurationTarget.Global);
 
 			if (importData.apiKey) {

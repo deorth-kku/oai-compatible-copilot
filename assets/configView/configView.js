@@ -18,7 +18,6 @@ const baseUrlInput = document.getElementById("baseUrl");
 const apiKeyInput = document.getElementById("apiKey");
 const delayInput = document.getElementById("delay");
 const readFileLinesInput = document.getElementById("readFileLines");
-const stripTargetSessionLogInput = document.getElementById("stripTargetSessionLog");
 const retryEnabledInput = document.getElementById("retryEnabled");
 const maxAttemptsInput = document.getElementById("maxAttempts");
 const intervalMsInput = document.getElementById("intervalMs");
@@ -64,6 +63,8 @@ const modelDiskKvCacheInput = document.getElementById("modelDiskKvCache");
 const modelDiskKvCacheField = document.getElementById("modelDiskKvCacheField");
 const modelLlamaSlotTimeoutInput = document.getElementById("modelLlamaSlotTimeout");
 const modelLlamaSlotTimeoutField = document.getElementById("modelLlamaSlotTimeoutField");
+const modelSplitSystemPromptInput = document.getElementById("modelSplitSystemPrompt");
+const modelSplitSystemPromptField = document.getElementById("modelSplitSystemPromptField");
 const supportedEffortsGroup = document.getElementById("modelSupportedEfforts");
 const modelThinkingTypeInput = document.getElementById("modelThinkingType");
 const modelHeadersInput = document.getElementById("modelHeaders");
@@ -102,7 +103,6 @@ document.getElementById("saveBase").addEventListener("click", () => {
 		apiKey: apiKeyInput.value,
 		delay: parseInt(delayInput.value) || 0,
 		readFileLines: parseInt(readFileLinesInput.value) || 0,
-		stripTargetSessionLog: stripTargetSessionLogInput.checked,
 		retry: retry,
 		commitModel: commitModelInput.value,
 		commitLanguage: commitLanguageInput.value,
@@ -301,7 +301,6 @@ window.addEventListener("message", (event) => {
 			apiKeyInput.value = apiKey || "";
 			delayInput.value = state.delay;
 			readFileLinesInput.value = message.payload.readFileLines || 0;
-			stripTargetSessionLogInput.checked = message.payload.stripTargetSessionLog !== false;
 			retryEnabledInput.checked = state.retry.enabled !== false;
 			maxAttemptsInput.value = state.retry.max_attempts || 3;
 			intervalMsInput.value = state.retry.interval_ms || 1000;
@@ -571,6 +570,7 @@ function resetModelForm() {
 	modelReasoningExcludeInput.value = "";
 	modelDiskKvCacheInput.value = "";
 	modelLlamaSlotTimeoutInput.value = "";
+	modelSplitSystemPromptInput.value = "";
 	uncheckSupportedEfforts();
 	syncReasoningEffortOptions();
 	updateOptimizationVisibility();
@@ -630,6 +630,9 @@ function collectModelFormData() {
 		disk_kv_cache: modelDiskKvCacheInput.value ? modelDiskKvCacheInput.value === "true" : undefined,
 		llama_slot_timeout: modelLlamaSlotTimeoutInput.value
 			? parseInt(modelLlamaSlotTimeoutInput.value)
+			: undefined,
+		split_system_prompt: modelSplitSystemPromptInput.value
+			? modelSplitSystemPromptInput.value === "true"
 			: undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
 			? parseInt(modelMaxCompletionTokensInput.value)
@@ -724,6 +727,7 @@ function updateOptimizationVisibility() {
 	const isLlamaCpp = modelOptimizationInput.value === "llama.cpp";
 	modelDiskKvCacheField.style.display = isLlamaCpp ? "" : "none";
 	modelLlamaSlotTimeoutField.style.display = isLlamaCpp ? "" : "none";
+	modelSplitSystemPromptField.style.display = isLlamaCpp ? "" : "none";
 }
 
 // Build thinking configuration object from form fields
@@ -1223,6 +1227,7 @@ function populateModelForm(model) {
 	modelOptimizationInput.value = model.optimization || "";
 	modelDiskKvCacheInput.value = model.disk_kv_cache !== undefined ? String(model.disk_kv_cache) : "";
 	modelLlamaSlotTimeoutInput.value = model.llama_slot_timeout || "";
+	modelSplitSystemPromptInput.value = model.split_system_prompt !== undefined ? String(model.split_system_prompt) : "";
 	setSupportedEfforts(model.supported_efforts);
 	syncReasoningEffortOptions();
 	// Populate reasoning configuration (only `exclude` is actively used)

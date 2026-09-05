@@ -168,6 +168,26 @@ export interface HFModelItem {
 	llama_slot_timeout?: number;
 
 	/**
+	 * EXPERIMENTAL: split the first system message at the first
+	 * `</memoryInstructions>` marker before sending the request upstream: the
+	 * stable prefix stays the system message and the variable remainder becomes
+	 * a following user message. Only effective with `apiMode: "openai"` and
+	 * `optimization: "llama.cpp"`.
+	 *
+	 * Copilot's system prompt is stable only up to the end of the
+	 * memory-instructions section: after `</memoryInstructions>` it varies
+	 * per session/workspace (skills, agents, AGENTS.md attachments, template
+	 * variables, the VSCODE_TARGET_SESSION_LOG line), which busts the
+	 * llama.cpp prompt cache. Splitting moves that variable tail into a
+	 * separate user message so the stable prefix can hit the cache. (Not a
+	 * second system message: llama.cpp's jinja template merges consecutive
+	 * leading system messages, which would defeat the split.)
+	 *
+	 * Default is false.
+	 */
+	split_system_prompt?: boolean;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".
