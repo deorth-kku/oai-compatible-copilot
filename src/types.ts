@@ -269,6 +269,9 @@ export interface LlamaTimings {
 	cache_reprocessed_n?: number;
 	cache_source?: string;
 	cache_reason?: string;
+	// Speculative decoding (draft model) stats
+	draft_n?: number;
+	draft_n_accepted?: number;
 	// llama.cpp aliases for prompt/completion token counts
 	input_tokens?: number;
 	output_tokens?: number;
