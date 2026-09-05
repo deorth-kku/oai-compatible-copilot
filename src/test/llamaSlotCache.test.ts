@@ -205,6 +205,8 @@ suite("llamaSlotCache", () => {
 			new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 		const headers = { Authorization: "Bearer key" };
+		// A caller-owned deadline that never fires during the tests.
+		const signal = new AbortController().signal;
 
 		teardown(() => {
 			globalThis.fetch = originalFetch;
@@ -212,14 +214,45 @@ suite("llamaSlotCache", () => {
 
 		test("fetchIdleSlot sends the model query param", async () => {
 			stubFetch(async () => json(200, [{ id: 0, is_processing: false }]));
-			const idle = await fetchIdleSlot("http://h:8080", "my/model", headers);
+			const idle = await fetchIdleSlot("http://h:8080", "my/model", headers, signal);
 			assert.strictEqual(idle, 0);
 			assert.strictEqual(calls[0].url, "http://h:8080/slots?model=my%2Fmodel");
 		});
 
+		test("fetchIdleSlot forwards the caller's signal to fetch", async () => {
+			stubFetch(async () => json(200, [{ id: 0, is_processing: false }]));
+			const idle = await fetchIdleSlot("http://h:8080", "my/model", headers, signal);
+			assert.strictEqual(idle, 0);
+			assert.strictEqual((calls[0].init as RequestInit).signal, signal);
+		});
+
+		test("fetchIdleSlot aborts when the caller's signal aborts", async () => {
+			// A server that hangs until the caller's signal aborts.
+			globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) =>
+				new Promise<Response>((_resolve, reject) => {
+					const s = init?.signal;
+					if (!s) {
+						return; // hang forever
+					}
+					if (s.aborted) {
+						reject(new DOMException("The operation was aborted.", "AbortError"));
+						return;
+					}
+					s.addEventListener(
+						"abort",
+						() => reject(new DOMException("The operation was aborted.", "AbortError")),
+						{ once: true }
+					);
+				});
+			const controller = new AbortController();
+			const pending = fetchIdleSlot("http://h:8080", "m", headers, controller.signal);
+			controller.abort();
+			assert.strictEqual(await pending, undefined);
+		});
+
 		test("restore sends filename and model in the JSON body (no query model)", async () => {
 			stubFetch(async () => json(200, { n_restored: 42 }));
-			const ok = await restoreSlotCache("http://h:8080", "my/model", 3, "abc.bin", headers);
+			const ok = await restoreSlotCache("http://h:8080", "my/model", 3, "abc.bin", headers, signal);
 			assert.strictEqual(ok, true);
 			assert.strictEqual(calls[0].url, "http://h:8080/slots/3?action=restore");
 			const init = calls[0].init as RequestInit;
@@ -231,24 +264,24 @@ suite("llamaSlotCache", () => {
 
 		test("restore fails when n_restored is 0", async () => {
 			stubFetch(async () => json(200, { n_restored: 0 }));
-			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers), false);
+			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
 		});
 
 		test("restore fails on a non-200 response", async () => {
 			stubFetch(async () => json(500, { error: "boom" }));
-			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers), false);
+			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
 		});
 
 		test("restore fails on a network error", async () => {
 			stubFetch(async () => {
 				throw new Error("ECONNREFUSED");
 			});
-			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers), false);
+			assert.strictEqual(await restoreSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
 		});
 
 		test("save sends filename and model in the JSON body (no query model)", async () => {
 			stubFetch(async () => json(200, { n_saved: 7 }));
-			const ok = await saveSlotCache("http://h:8080", "my/model", 3, "abc.bin", headers);
+			const ok = await saveSlotCache("http://h:8080", "my/model", 3, "abc.bin", headers, signal);
 			assert.strictEqual(ok, true);
 			assert.strictEqual(calls[0].url, "http://h:8080/slots/3?action=save");
 			const init = calls[0].init as RequestInit;
@@ -259,12 +292,12 @@ suite("llamaSlotCache", () => {
 
 		test("save fails when n_saved is 0", async () => {
 			stubFetch(async () => json(200, { n_saved: 0 }));
-			assert.strictEqual(await saveSlotCache("http://h:8080", "m", 1, "a.bin", headers), false);
+			assert.strictEqual(await saveSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
 		});
 
 		test("save fails on a non-200 response", async () => {
 			stubFetch(async () => json(500, { error: "boom" }));
-			assert.strictEqual(await saveSlotCache("http://h:8080", "m", 1, "a.bin", headers), false);
+			assert.strictEqual(await saveSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
 		});
 	});
 });

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feat(llama.cpp, experimental): Add per-model `llama_slot_timeout` option (under Dedicated Optimization → llama.cpp) — timeout in milliseconds for each llama.cpp `/slots` request of the disk KV cache feature (default 300000). The slot lookup and restore now abort on whichever fires first: their own per-call timeout or the chat request's cancellation (Go-`context`-style deadline); the fire-and-forget save uses only its own timeout.
 - Feat(llama.cpp, experimental): Add per-model `disk_kv_cache` option (under Dedicated Optimization → llama.cpp) to reuse the llama.cpp on-disk prompt (KV) cache across new sessions. On the first request of a new session the extension computes a cache id from model (base id) + reasoning effort + sanitized system prompt + tools, restores `{cache_id}.bin` into an idle slot found via the server's `/slots` endpoint (pinned with `id_slot`), and — when the cache did not exist yet — saves it after the stream ends so the next session can restore it. Requires a llama.cpp server with `/slots` enabled (default; `--no-slots` disables it) and `--slot-save-path`. Known risk: swapping the model file behind the same id (or changing the KV quantization) may make a stale cache restore and serve wrong KV.
 
 ## 0.4.2 (2026-05-19)
