@@ -39,6 +39,29 @@ import {
 } from "./llamaSlotCache";
 
 /**
+ * Default timeout (ms) for llama.cpp `/slots` requests when the model config
+ * does not specify `llama_slot_timeout`.
+ *
+ * The 5-minute default is NOT a budget for a slow disk-KV restore — if a
+ * restore ever took that long, plain GPU prefill would be faster. It is sized
+ * for ROUTER mode: a llama.cpp backend behind a router may only start loading
+ * the model when the first `/slots` request arrives, so that request blocks
+ * until loading finishes, which can take minutes for large models.
+ */
+const DEFAULT_LLAMA_SLOT_TIMEOUT_MS = 300_000;
+
+/**
+ * Go-`context`-style deadline for ONE llama.cpp `/slots` call: a fresh local
+ * timeout merged with the chat request's cancellation signal (aborts on
+ * whichever fires first). A fresh timeout is created per call so sequential
+ * calls (slot lookup, then restore) each get the full configured budget
+ * instead of sharing one.
+ */
+function slotDeadline(timeoutMs: number, requestSignal: AbortSignal): AbortSignal {
+	return AbortSignal.any([AbortSignal.timeout(timeoutMs), requestSignal]);
+}
+
+/**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
  */
 export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
@@ -543,7 +566,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// of a new session (exactly system + injected-env user message + real
 				// user message). Later turns are handled by the regular VRAM KV cache.
 				// See llamaSlotCache.ts for the endpoint details.
-				let slotCache: { rootUrl: string; filename: string } | undefined;
+				let slotCache: { rootUrl: string; filename: string; timeoutMs: number } | undefined;
 				let pinnedSlot: number | undefined;
 				let slotRestored = false;
 				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true && messages.length === 3) {
@@ -556,18 +579,30 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						tools: requestBody.tools,
 						toolChoice: requestBody.tool_choice,
 					});
-					slotCache = { rootUrl, filename: `${cacheId}.bin` };
+					// Per-model /slots request timeout (default: 5 minutes).
+					const slotTimeoutMs =
+						typeof um.llama_slot_timeout === "number" && um.llama_slot_timeout > 0
+							? um.llama_slot_timeout
+							: DEFAULT_LLAMA_SLOT_TIMEOUT_MS;
+					slotCache = { rootUrl, filename: `${cacheId}.bin`, timeoutMs: slotTimeoutMs };
 					// Find an idle slot and restore the disk cache into it. The restore
 					// is awaited: the request waits for it to finish so the restored
-					// slot is already warm when generation starts.
-					pinnedSlot = await fetchIdleSlot(rootUrl, parsedModelId.baseId, requestHeaders);
+					// slot is already warm when generation starts. Each call gets its
+					// OWN fresh timeout, merged with the chat request's cancellation.
+					pinnedSlot = await fetchIdleSlot(
+						rootUrl,
+						parsedModelId.baseId,
+						requestHeaders,
+						slotDeadline(slotTimeoutMs, abortController.signal)
+					);
 					if (pinnedSlot !== undefined) {
 						slotRestored = await restoreSlotCache(
 							rootUrl,
 							parsedModelId.baseId,
 							pinnedSlot,
 							slotCache.filename,
-							requestHeaders
+							requestHeaders,
+							slotDeadline(slotTimeoutMs, abortController.signal)
 						);
 					}
 					// Always send verbose: true while this experimental feature is active
@@ -635,21 +670,23 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 							// on it, and it must not carry the request's abort signal
 							// (aborted in `finally` below).
 							if (actualSlot !== undefined) {
-										void saveSlotCache(
-											slotCache.rootUrl,
-											parsedModelId.baseId,
-											actualSlot,
-											slotCache.filename,
-											requestHeaders
-										).catch(
-									(err) => {
-										logger.warn("llamaSlotCache.saveFailed", {
-											slotId: actualSlot,
-											filename: slotCache.filename,
-											error: err instanceof Error ? err.message : String(err),
-										});
-									}
-								);
+								// Fire-and-forget: bounded ONLY by the timeout — the chat
+								// request's cancellation signal is deliberately NOT used
+								// (it is aborted in `finally` below).
+								void saveSlotCache(
+									slotCache.rootUrl,
+									parsedModelId.baseId,
+									actualSlot,
+									slotCache.filename,
+									requestHeaders,
+									AbortSignal.timeout(slotCache.timeoutMs)
+								).catch((err) => {
+									logger.warn("llamaSlotCache.saveFailed", {
+										slotId: actualSlot,
+										filename: slotCache.filename,
+										error: err instanceof Error ? err.message : String(err),
+									});
+								});
 							} else {
 								logger.debug("llamaSlotCache.saveSkipped", {
 									filename: slotCache.filename,

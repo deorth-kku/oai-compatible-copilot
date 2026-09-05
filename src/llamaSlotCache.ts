@@ -21,6 +21,14 @@
  *
  *   Note: GET /slots takes `model` as a QUERY param, but the POST actions take
  *   `model` in the JSON BODY (400 "model name is missing" otherwise).
+ *
+ * This module is a thin API adapter: it owns NO timeout/cancellation policy.
+ * Each call takes the caller's `signal` and passes it straight to `fetch`.
+ * The caller (provider.ts) builds the Go-`context`-style deadline:
+ *   - fetchIdleSlot / restoreSlotCache:
+ *     `AbortSignal.any([AbortSignal.timeout(t), requestSignal])`
+ *   - saveSlotCache (fire-and-forget): `AbortSignal.timeout(t)` only — it must
+ *     outlive the request (the provider aborts the request signal in `finally`).
  */
 import { createHash } from "crypto";
 
@@ -151,18 +159,22 @@ export function findIdleSlot(slots: readonly LlamaSlot[]): number | undefined {
  * Returns `undefined` on any failure (400/404/503/network, non-array body,
  * empty list, all slots busy) — callers must treat this as "feature
  * unavailable" and continue the chat request without slot pinning.
+ *
+ * `signal` is the caller-owned deadline (e.g. the per-model timeout merged
+ * with the chat request's cancellation); it is forwarded to `fetch` as-is.
  */
 export async function fetchIdleSlot(
 	rootUrl: string,
 	modelId: string,
-	headers: Record<string, string>
+	headers: Record<string, string>,
+	signal: AbortSignal
 ): Promise<number | undefined> {
 	const url = `${rootUrl}/slots?model=${encodeURIComponent(modelId)}`;
 	try {
 		const res = await fetch(url, {
 			method: "GET",
 			headers,
-			signal: AbortSignal.timeout(10_000),
+			signal,
 		});
 		if (!res.ok) {
 			const text = await res.text();
@@ -198,13 +210,17 @@ export async function fetchIdleSlot(
  * Unlike `GET /slots` (where `model` is a query param), the POST actions take
  * `model` in the JSON BODY — the server answers 400 "model name is missing from
  * the request" when it is absent.
+ *
+ * `signal` is the caller-owned deadline (e.g. the per-model timeout merged
+ * with the chat request's cancellation); it is forwarded to `fetch` as-is.
  */
 export async function restoreSlotCache(
 	rootUrl: string,
 	modelId: string,
 	slotId: number,
 	filename: string,
-	headers: Record<string, string>
+	headers: Record<string, string>,
+	signal: AbortSignal
 ): Promise<boolean> {
 	const url = `${rootUrl}/slots/${slotId}?action=restore`;
 	try {
@@ -212,7 +228,7 @@ export async function restoreSlotCache(
 			method: "POST",
 			headers: { ...headers, "Content-Type": "application/json" },
 			body: JSON.stringify({ filename, model: modelId }),
-			signal: AbortSignal.timeout(30_000),
+			signal,
 		});
 		if (!res.ok) {
 			const text = await res.text();
@@ -235,8 +251,12 @@ export async function restoreSlotCache(
 /**
  * `POST {root}/slots/{id}?action=save` with JSON body
  * `{ "filename": {filename}, "model": {modelId} }` — intended to be used
- * fire-and-forget after the stream ends. Callers must NOT pass the chat
- * request's abort signal (the provider aborts it in `finally`).
+ * fire-and-forget after the stream ends.
+ *
+ * `signal` is the caller-owned deadline. For the fire-and-forget use case the
+ * caller passes a plain `AbortSignal.timeout(ms)` — NOT the chat request's
+ * cancellation signal (this call must outlive the request, whose signal the
+ * provider aborts in `finally`).
  *
  * Unlike `GET /slots` (where `model` is a query param), the POST actions take
  * `model` in the JSON BODY — the server answers 400 "model name is missing from
@@ -247,7 +267,8 @@ export async function saveSlotCache(
 	modelId: string,
 	slotId: number,
 	filename: string,
-	headers: Record<string, string>
+	headers: Record<string, string>,
+	signal: AbortSignal
 ): Promise<boolean> {
 	const url = `${rootUrl}/slots/${slotId}?action=save`;
 	try {
@@ -255,6 +276,7 @@ export async function saveSlotCache(
 			method: "POST",
 			headers: { ...headers, "Content-Type": "application/json" },
 			body: JSON.stringify({ filename, model: modelId }),
+			signal,
 		});
 		if (!res.ok) {
 			const text = await res.text();

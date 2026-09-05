@@ -149,6 +149,25 @@ export interface HFModelItem {
 	disk_kv_cache?: boolean;
 
 	/**
+	 * Timeout in milliseconds for ALL llama.cpp `/slots` requests issued by the
+	 * disk KV cache feature (`GET /slots`, `restore`, and the fire-and-forget
+	 * `save`).
+	 *
+	 * Go-`context`-style deadline: the `GET /slots` and `restore` calls are
+	 * bounded by BOTH this timeout and the chat request's cancellation (they
+	 * abort as soon as the user stops the request); the fire-and-forget `save`
+	 * uses ONLY this timeout (it must outlive the request, which is aborted in
+	 * the provider's `finally`).
+	 *
+	 * Default: 300000 (5 minutes). The default is sized for router mode, where
+	 * the llama.cpp backend may only start loading the model when the first
+	 * `/slots` request arrives (the request blocks until loading finishes); it
+	 * is NOT a budget for a slow disk-KV restore (a restore that long would
+	 * lose to plain GPU prefill).
+	 */
+	llama_slot_timeout?: number;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".

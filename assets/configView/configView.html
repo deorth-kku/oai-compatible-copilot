@@ -468,6 +468,22 @@
 											<option value="false">False</option>
 										</select>
 									</div>
+									<div class="field" id="modelLlamaSlotTimeoutField">
+										<label for="modelLlamaSlotTimeout">Slot Request Timeout (ms)</label>
+										<div class="field-description">
+											Timeout for each llama.cpp /slots request of the disk KV cache feature
+											(GET /slots, restore, save). The slot lookup and restore also abort as soon as
+											the chat request is cancelled. Default: 300000 (5 minutes).
+										</div>
+										<input
+											id="modelLlamaSlotTimeout"
+											type="number"
+											class="model-input"
+											min="1"
+											step="1"
+											placeholder="300000"
+										/>
+									</div>
 								</div>
 							</div>
 							<!-- Custom Headers and Extra Parameters -->
