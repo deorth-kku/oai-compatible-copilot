@@ -455,6 +455,19 @@
 											<option value="false">False</option>
 										</select>
 									</div>
+									<div class="field" id="modelDiskKvCacheField">
+										<label for="modelDiskKvCache">Disk KV Cache (experimental)</label>
+										<div class="field-description">
+											Reuse the llama.cpp on-disk prompt cache across new sessions via the /slots endpoint
+											(restore/save of {cache_id}.bin). Requires a llama.cpp server with /slots enabled
+											and --slot-save-path configured. Experimental.
+										</div>
+										<select id="modelDiskKvCache" class="model-input">
+											<option value="">Default (False)</option>
+											<option value="true">True</option>
+											<option value="false">False</option>
+										</select>
+									</div>
 								</div>
 							</div>
 							<!-- Custom Headers and Extra Parameters -->

@@ -39,6 +39,19 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	onSpeedUpdate?: (state: LlamaSpeedState) => void;
 
+	/**
+	 * The slot id the llama.cpp server actually used for this request, captured
+	 * from the `__verbose.id_slot` field of the final (finish_reason) SSE chunk.
+	 * Only set when the request was sent with `verbose: true` to a llama.cpp
+	 * backend; undefined when not captured (e.g. stream cancelled early).
+	 */
+	private _llamaIdSlot: number | undefined;
+
+	/** The slot id the server used for this request (see `_llamaIdSlot`). */
+	getLlamaIdSlot(): number | undefined {
+		return this._llamaIdSlot;
+	}
+
 	constructor(modelId: string) {
 		super(modelId);
 	}
@@ -348,6 +361,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	): Promise<void> {
 		const modelId = this._modelId;
 		this.beginReasoningCapture();
+		this._llamaIdSlot = undefined;
 		logger.debug("openai.stream.start", { modelId });
 
 		const reader = responseBody.getReader();
@@ -394,6 +408,13 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 							}
 							this._usage = usage;
 							logger.debug("usage.capture", { modelId: this._modelId, usage: this._usage });
+						}
+						// Capture the llama.cpp slot id from the `__verbose` field of the
+						// final (finish_reason) chunk — needed for disk KV cache save.
+						// Absent on other backends and when `verbose` is not requested.
+						const verbose = parsed.__verbose as Record<string, unknown> | undefined;
+						if (verbose && typeof verbose.id_slot === "number") {
+							this._llamaIdSlot = verbose.id_slot;
 						}
 						// Capture optional llama.cpp speed fields (absent on other backends)
 						const speed = parseLlamaSpeed(parsed);

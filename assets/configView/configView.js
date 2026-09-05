@@ -60,6 +60,8 @@ const modelMaxCompletionTokensInput = document.getElementById("modelMaxCompletio
 const modelOptimizationInput = document.getElementById("modelOptimization");
 const modelReasoningExcludeInput = document.getElementById("modelReasoningExclude");
 const modelReasoningExcludeField = document.getElementById("modelReasoningExcludeField");
+const modelDiskKvCacheInput = document.getElementById("modelDiskKvCache");
+const modelDiskKvCacheField = document.getElementById("modelDiskKvCacheField");
 const supportedEffortsGroup = document.getElementById("modelSupportedEfforts");
 const modelThinkingTypeInput = document.getElementById("modelThinkingType");
 const modelHeadersInput = document.getElementById("modelHeaders");
@@ -565,6 +567,7 @@ function resetModelForm() {
 	modelMaxCompletionTokensInput.value = "";
 	modelOptimizationInput.value = "";
 	modelReasoningExcludeInput.value = "";
+	modelDiskKvCacheInput.value = "";
 	uncheckSupportedEfforts();
 	syncReasoningEffortOptions();
 	updateOptimizationVisibility();
@@ -621,6 +624,7 @@ function collectModelFormData() {
 		strip_reminder_instructions: modelStripReminderInstructionsInput.value
 			? modelStripReminderInstructionsInput.value === "true"
 			: undefined,
+		disk_kv_cache: modelDiskKvCacheInput.value ? modelDiskKvCacheInput.value === "true" : undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
 			? parseInt(modelMaxCompletionTokensInput.value)
 			: undefined,
@@ -705,11 +709,14 @@ function syncReasoningEffortOptions() {
 	modelReasoningEffortInput.value = values.includes(current) ? current : "";
 }
 
-// Show/hide the OpenRouter-only "Reasoning Exclude" field based on the
-// selected optimization type.
+// Show/hide the backend-specific fields based on the selected optimization
+// type: "Reasoning Exclude" is OpenRouter-only, "Disk KV Cache" is
+// llama.cpp-only.
 function updateOptimizationVisibility() {
 	const isOpenRouter = modelOptimizationInput.value === "openrouter";
 	modelReasoningExcludeField.style.display = isOpenRouter ? "" : "none";
+	const isLlamaCpp = modelOptimizationInput.value === "llama.cpp";
+	modelDiskKvCacheField.style.display = isLlamaCpp ? "" : "none";
 }
 
 // Build thinking configuration object from form fields
@@ -1207,6 +1214,7 @@ function populateModelForm(model) {
 	modelMaxCompletionTokensInput.value = model.max_completion_tokens || "";
 	// Populate dedicated optimization + supported efforts
 	modelOptimizationInput.value = model.optimization || "";
+	modelDiskKvCacheInput.value = model.disk_kv_cache !== undefined ? String(model.disk_kv_cache) : "";
 	setSupportedEfforts(model.supported_efforts);
 	syncReasoningEffortOptions();
 	// Populate reasoning configuration (only `exclude` is actively used)
