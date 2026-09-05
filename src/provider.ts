@@ -200,13 +200,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			// Per-model opt-in: strip the first <reminderInstructions> block that Copilot
 			// injects into every user turn before sending the request upstream.
 			const stripReminder = um?.strip_reminder_instructions === true;
-			// Global opt-in (default true): strip the per-session
-			// VSCODE_TARGET_SESSION_LOG line from the system prompt so the stable
-			// portion of the system prompt stays cacheable across sessions.
-			const stripSessionLog = config.get<boolean>("oaicopilot.stripTargetSessionLog", true);
+			// Per-model opt-in (openai mode + llama.cpp optimization only): split
+			// the first system message at the first </memoryInstructions> marker
+			// so the stable prefix stays cacheable while the variable tail
+			// (skills, agents, attachments, template variables, the per-session
+			// VSCODE_TARGET_SESSION_LOG line) moves into a following user message
+			// (a second system message would be merged back by llama.cpp's jinja
+			// template).
+			const splitSystemPrompt =
+				apiMode === "openai" && um?.optimization === "llama.cpp" && um?.split_system_prompt === true;
 			const requestMessages =
-				stripReminder || stripSessionLog
-					? sanitizeMessages(messages, { stripReminder, stripSessionLog })
+				stripReminder || splitSystemPrompt
+					? sanitizeMessages(messages, { stripReminder, splitSystemPrompt })
 					: messages;
 
 			// Update Token Usage
@@ -360,9 +365,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// cache is scoped per conversation (VS Code only round-trips text
 				// content, so we can't carry a random id). We hash the *original*
 				// system prompt, which embeds a per-session UUID, so it is unique
-				// per session. This must use the pre-sanitize `messages` — the
-				// VSCODE_TARGET_SESSION_LOG line is stripped from `requestMessages`,
-				// which would make the id collide across sessions.
+				// per session. This must use the pre-split `messages` — the
+				// VSCODE_TARGET_SESSION_LOG line moves out of the first system
+				// message in `requestMessages`, which would make the id collide
+				// across sessions.
 				openaiResponsesApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// in the full history (append-only), so it matches the replay key.
@@ -543,9 +549,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// cache is scoped per conversation (VS Code only round-trips text
 				// content, so we can't carry a random id). We hash the *original*
 				// system prompt, which embeds a per-session UUID, so it is unique
-				// per session. This must use the pre-sanitize `messages` — the
-				// VSCODE_TARGET_SESSION_LOG line is stripped from `requestMessages`,
-				// which would make the id collide across sessions.
+				// per session. This must use the pre-split `messages` — the
+				// VSCODE_TARGET_SESSION_LOG line moves out of the first system
+				// message in `requestMessages`, which would make the id collide
+				// across sessions.
 				openaiApi.setConvIdFromMessages(messages);
 				// Key the current turn by the absolute index the response will occupy
 				// (the conversation is append-only, so this matches the replay key).

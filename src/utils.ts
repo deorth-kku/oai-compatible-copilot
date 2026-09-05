@@ -144,28 +144,13 @@ export function stripReminderInstructions(text: string): string {
 }
 
 /**
- * Remove the first `VSCODE_TARGET_SESSION_LOG:` line from the given text.
- *
- * Copilot injects a `- VSCODE_TARGET_SESSION_LOG: <path>` line into the system
- * prompt of every chat session. The path embeds a per-session UUID, so its
- * presence makes the whole system prompt differ between sessions and busts the
- * upstream prompt cache on every new session. Stripping this line (while the
- * conversation id is still computed from the *original* system prompt — see
- * `CommonApi.computeConvId`) lets the stable portion of the system prompt stay
- * cacheable across sessions.
- *
- * Only the first occurrence is removed (non-global regex), and the whole line —
- * including its trailing newline — is dropped. Case-sensitive.
+ * Literal marker ending the stable memory-instructions section of the Copilot
+ * system prompt. Everything after the first occurrence is
+ * session/workspace-specific (skills, agents, AGENTS.md attachments, template
+ * variables, the VSCODE_TARGET_SESSION_LOG line) and busts the upstream prompt
+ * cache.
  */
-export function stripTargetSessionLog(text: string): string {
-	if (!text.includes("VSCODE_TARGET_SESSION_LOG:")) {
-		return text;
-	}
-	return text.replace(/^[^\S\n]*[-*]?[^\S\n]*VSCODE_TARGET_SESSION_LOG:[^\n]*\n?/m, (match) => {
-		logger.debug("stripTargetSessionLog", { stripped: match });
-		return "";
-	});
-}
+const MEMORY_INSTRUCTIONS_END_MARKER = "</memoryInstructions>";
 
 /**
  * Options controlling which per-message sanitizations {@link sanitizeMessages}
@@ -174,22 +159,30 @@ export function stripTargetSessionLog(text: string): string {
 export interface SanitizeMessagesOptions {
 	/** Strip the first `<reminderInstructions>` block from user-role text parts. */
 	stripReminder?: boolean;
-	/** Strip the first `VSCODE_TARGET_SESSION_LOG:` line from system-role text parts. */
-	stripSessionLog?: boolean;
+	/**
+	 * Split the first system-role message at the first `</memoryInstructions>`
+	 * marker: the stable prefix stays a system message and the trimmed
+	 * remainder becomes a following user message (when set).
+	 */
+	splitSystemPrompt?: boolean;
 }
 
 /**
  * Return a new message array with per-role sanitizations applied to text parts.
  *
  * In a single pass over the messages this can:
- * - strip the first `<reminderInstructions>` block from **user**-role text parts
- *   (when `options.stripReminder` is set), and
- * - strip the first `VSCODE_TARGET_SESSION_LOG:` line from **system**-role text
- *   parts (when `options.stripSessionLog` is set).
+ * - strip the first `<reminderInstructions>` block from **user**-role text
+ *   parts (when `options.stripReminder` is set), and
+ * - split the **first** system-role message at the first
+ *   `</memoryInstructions>` marker (when `options.splitSystemPrompt` is set):
+ *   the first message keeps the text up to and including the marker, and the
+ *   trimmed remainder becomes a following **user** message (not a second
+ *   system message — llama.cpp's jinja template merges consecutive leading
+ *   system messages, which would defeat the split).
  *
  * Only `LanguageModelTextPart`s in the matching role are replaced; all other
  * parts (data, tool call, tool result, thinking) and non-matching messages pass
- * through by reference. If no text part changes, the original array is returned
+ * through by reference. If nothing changes, the original array is returned
  * unchanged. The input array is never mutated.
  */
 export function sanitizeMessages(
@@ -197,17 +190,53 @@ export function sanitizeMessages(
 	options: SanitizeMessagesOptions
 ): vscode.LanguageModelChatRequestMessage[] {
 	const stripReminder = options.stripReminder === true;
-	const stripSessionLog = options.stripSessionLog === true;
-	if (!stripReminder && !stripSessionLog) {
+	const splitSystemPrompt = options.splitSystemPrompt === true;
+	if (!stripReminder && !splitSystemPrompt) {
 		return messages as vscode.LanguageModelChatRequestMessage[];
 	}
 	let changed = false;
+	let systemSplitDone = false;
 	const out: vscode.LanguageModelChatRequestMessage[] = [];
 	for (const m of messages) {
 		const role = mapRole(m);
 		const wantReminder = stripReminder && role === "user";
-		const wantSessionLog = stripSessionLog && role === "system";
-		if ((!wantReminder && !wantSessionLog) || !m.content) {
+		const wantSplit = splitSystemPrompt && !systemSplitDone && role === "system";
+		// Only the FIRST system message is a split candidate; once it has been
+		// seen (split or not) the opportunity is consumed.
+		if (wantSplit) {
+			systemSplitDone = true;
+			if (m.content && m.content.length === 1) {
+				const part = m.content[0];
+				if (part instanceof vscode.LanguageModelTextPart) {
+					const idx = part.value.indexOf(MEMORY_INSTRUCTIONS_END_MARKER);
+					if (idx >= 0) {
+						const first = part.value.slice(0, idx + MEMORY_INSTRUCTIONS_END_MARKER.length).trim();
+						const rest = part.value.slice(idx + MEMORY_INSTRUCTIONS_END_MARKER.length).trim();
+						if (first && rest) {
+							changed = true;
+							logger.debug("splitSystemPrompt", {
+								firstLength: first.length,
+								restLength: rest.length,
+							});
+							out.push({ ...m, content: [new vscode.LanguageModelTextPart(first)] });
+								// The remainder becomes a following user message (not a
+								// second system message: llama.cpp's jinja template
+								// merges consecutive leading system messages, which
+								// would defeat the split).
+							out.push({
+								role: vscode.LanguageModelChatMessageRole.User,
+								name: undefined,
+								content: [new vscode.LanguageModelTextPart(rest)],
+							});
+							continue;
+						}
+					}
+				}
+			}
+			out.push(m);
+			continue;
+		}
+		if (!wantReminder || !m.content) {
 			out.push(m);
 			continue;
 		}
@@ -215,13 +244,7 @@ export function sanitizeMessages(
 		const parts: unknown[] = [];
 		for (const part of m.content) {
 			if (part instanceof vscode.LanguageModelTextPart) {
-				let value = part.value;
-				if (wantReminder) {
-					value = stripReminderInstructions(value);
-				}
-				if (wantSessionLog) {
-					value = stripTargetSessionLog(value);
-				}
+				const value = stripReminderInstructions(part.value);
 				if (value !== part.value) {
 					messageChanged = true;
 					parts.push(new vscode.LanguageModelTextPart(value));

@@ -41,14 +41,6 @@
 					</div>
 					<input id="readFileLines" type="number" min="0" placeholder="0" />
 				</div>
-				<div class="field">
-					<label for="stripTargetSessionLog">Strip Target Session Log</label>
-					<div class="field-description">
-						Strip the per-session VSCODE_TARGET_SESSION_LOG line from the system prompt so the stable portion stays
-						cacheable across sessions.
-					</div>
-					<input id="stripTargetSessionLog" type="checkbox" checked />
-				</div>
 			</div>
 			<div class="retry-config">
 				<h3>Retry Configuration</h3>
@@ -483,6 +475,20 @@
 											step="1"
 											placeholder="300000"
 										/>
+									</div>
+									<div class="field" id="modelSplitSystemPromptField">
+										<label for="modelSplitSystemPrompt">Split System Prompt (experimental)</label>
+										<div class="field-description">
+											Split the first system message at the first &lt;/memoryInstructions&gt; marker so the stable
+											prefix stays cacheable by the llama.cpp prompt cache. The variable tail (skills, agents,
+											attachments, template variables, per-session log) moves into a following user message
+											(a second system message would be merged back by llama.cpp's jinja template).
+										</div>
+										<select id="modelSplitSystemPrompt" class="model-input">
+											<option value="">Default (False)</option>
+											<option value="true">True</option>
+											<option value="false">False</option>
+										</select>
 									</div>
 								</div>
 							</div>
