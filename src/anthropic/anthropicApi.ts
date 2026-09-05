@@ -674,18 +674,18 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) break;
+				if (done) {break;}
 
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 
 				for (const line of lines) {
-					if (line.trim() === "") continue;
-					if (!line.startsWith("data:")) continue;
+					if (line.trim() === "") {continue;}
+					if (!line.startsWith("data:")) {continue;}
 
 					const data = line.slice(5).trim();
-					if (data === "[DONE]") continue;
+					if (data === "[DONE]") {continue;}
 
 					try {
 						const chunk: AnthropicStreamChunk = JSON.parse(data);
@@ -696,7 +696,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 						}
 
 						// Handle message stop
-						if (chunk.type === "message_stop") break;
+						if (chunk.type === "message_stop") {break;}
 
 						// Handle error responses
 						if (chunk.type === "error") {

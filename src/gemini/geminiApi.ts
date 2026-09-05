@@ -16,7 +16,6 @@ import { logger } from "../logger";
 import {
 	isImageMimeType,
 	isToolResultPart,
-	collectToolResultText,
 	extractToolResultMedia,
 	convertToolsToOpenAI,
 	mapRole,
@@ -1052,12 +1051,12 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 		}
 	}
 
-	async *createMessage(
-		model: HFModelItem,
-		systemPrompt: string,
-		messages: { role: string; content: string }[],
-		baseUrl: string,
-		apiKey: string
+	createMessage(
+		_model: HFModelItem,
+		_systemPrompt: string,
+		_messages: { role: string; content: string }[],
+		_baseUrl: string,
+		_apiKey: string
 	): AsyncGenerator<{ type: "text"; text: string }> {
 		throw new Error("Method not implemented.");
 	}

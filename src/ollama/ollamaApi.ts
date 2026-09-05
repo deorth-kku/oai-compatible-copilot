@@ -11,7 +11,7 @@ import type { HFModelItem, ModelConversionConfig } from "../types";
 
 import type { OllamaMessage, OllamaRequestBody, OllamaStreamChunk, OllamaToolCall } from "./ollamaTypes";
 
-import { isToolResultPart, collectToolResultText, extractToolResultMedia, convertToolsToOpenAI, mapRole } from "../utils";
+import { isToolResultPart, extractToolResultMedia, convertToolsToOpenAI, mapRole } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
@@ -356,14 +356,14 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) break;
+				if (done) {break;}
 
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 
 				for (const line of lines) {
-					if (!line.trim()) continue;
+					if (!line.trim()) {continue;}
 
 					try {
 						const chunk: OllamaStreamChunk = JSON.parse(line);

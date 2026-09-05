@@ -221,14 +221,14 @@ export type HFApiMode = "openai" | "openai-responses" | "ollama" | "anthropic" |
 /**
  * Custom data part MIME types for vscode.LanguageModelDataPart
  */
-export namespace CustomDataPartMimeTypes {
-	export const CacheControl = "cache_control";
-	export const StatefulMarker = "stateful_marker";
-	export const ThinkingData = "thinking";
-	export const ContextManagement = "context_management";
-	export const PhaseData = "phase_data";
-	export const Usage = "usage";
-}
+export const CustomDataPartMimeTypes = {
+	CacheControl: "cache_control",
+	StatefulMarker: "stateful_marker",
+	ThinkingData: "thinking",
+	ContextManagement: "context_management",
+	PhaseData: "phase_data",
+	Usage: "usage",
+} as const;
 
 /**
  * Standard OpenAI token usage details.
