@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- Feat(llama.cpp, experimental): Add per-model `disk_kv_cache` option (under Dedicated Optimization → llama.cpp) to reuse the llama.cpp on-disk prompt (KV) cache across new sessions. On the first request of a new session the extension computes a cache id from model (base id) + reasoning effort + sanitized system prompt + tools, restores `{cache_id}.bin` into an idle slot found via the server's `/slots` endpoint (pinned with `id_slot`), and — when the cache did not exist yet — saves it after the stream ends so the next session can restore it. Requires a llama.cpp server with `/slots` enabled (default; `--no-slots` disables it) and `--slot-save-path`. Known risk: swapping the model file behind the same id (or changing the KV quantization) may make a stale cache restore and serve wrong KV.
+
 ## 0.4.2 (2026-05-19)
 
 - Feat(anthropic): Enable prompt caching. The system prompt and the last tool definition are now marked with `cache_control: { type: "ephemeral" }`, and in-message `cache_control` markers emitted by Copilot (`LanguageModelDataPart` with mimeType `"cache_control"`) are forwarded to Anthropic instead of being silently dropped. Add a per-model `cache_control` boolean (default `true`) to disable it for providers that reject the field.

@@ -29,6 +29,14 @@ import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
 import { LlamaSpeedDisplay } from "./llamaSpeed";
+import {
+	computeSlotCacheId,
+	extractSystemText,
+	fetchIdleSlot,
+	getServerRootUrl,
+	restoreSlotCache,
+	saveSlotCache,
+} from "./llamaSlotCache";
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -531,6 +539,51 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				};
 				requestBody = openaiApi.prepareRequestBody(requestBody, um, options);
 
+				// Experimental llama.cpp disk KV cache reuse: only on the FIRST request
+				// of a new session (exactly system + injected-env user message + real
+				// user message). Later turns are handled by the regular VRAM KV cache.
+				// See llamaSlotCache.ts for the endpoint details.
+				let slotCache: { rootUrl: string; filename: string } | undefined;
+				let pinnedSlot: number | undefined;
+				let slotRestored = false;
+				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true && messages.length === 3) {
+					const rootUrl = getServerRootUrl(BASE_URL);
+					const cacheId = computeSlotCacheId({
+						model: parsedModelId.baseId,
+						reasoning:
+							typeof requestBody.reasoning_effort === "string" ? requestBody.reasoning_effort : "",
+						system: extractSystemText(openaiMessages),
+						tools: requestBody.tools,
+						toolChoice: requestBody.tool_choice,
+					});
+					slotCache = { rootUrl, filename: `${cacheId}.bin` };
+					// Find an idle slot and restore the disk cache into it. The restore
+					// is awaited: the request waits for it to finish so the restored
+					// slot is already warm when generation starts.
+					pinnedSlot = await fetchIdleSlot(rootUrl, parsedModelId.baseId, requestHeaders);
+					if (pinnedSlot !== undefined) {
+						slotRestored = await restoreSlotCache(
+							rootUrl,
+							parsedModelId.baseId,
+							pinnedSlot,
+							slotCache.filename,
+							requestHeaders
+						);
+					}
+					// Always send verbose: true while this experimental feature is active
+					// so we can learn the server's actual slot from __verbose.id_slot.
+					requestBody.verbose = true;
+					if (slotRestored) {
+						requestBody.id_slot = pinnedSlot;
+					}
+					logger.debug("llamaSlotCache.decision", {
+						filename: slotCache.filename,
+						idleSlot: pinnedSlot,
+						restored: slotRestored,
+						idSlot: slotRestored ? pinnedSlot : undefined,
+					});
+				}
+
 				// send chat request with retry
 				const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
 				logger.debug("request.body", { url, requestBody });
@@ -560,6 +613,51 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				this.llamaSpeed.begin();
 				try {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
+					// Experimental llama.cpp disk KV cache post-processing.
+					if (slotCache) {
+						const actualSlot = openaiApi.getLlamaIdSlot();
+						if (
+							slotRestored &&
+							pinnedSlot !== undefined &&
+							actualSlot !== undefined &&
+							actualSlot !== pinnedSlot
+						) {
+							// The server did not honor the pinned id_slot.
+							logger.warn("llamaSlotCache.slotMismatch", {
+								pinned: pinnedSlot,
+								actual: actualSlot,
+							});
+						}
+						if (!slotRestored) {
+							// The disk cache did not exist yet (or the restore failed):
+							// save it from the slot the server actually used so the next
+							// new session can restore it. Fire-and-forget — do not block
+							// on it, and it must not carry the request's abort signal
+							// (aborted in `finally` below).
+							if (actualSlot !== undefined) {
+										void saveSlotCache(
+											slotCache.rootUrl,
+											parsedModelId.baseId,
+											actualSlot,
+											slotCache.filename,
+											requestHeaders
+										).catch(
+									(err) => {
+										logger.warn("llamaSlotCache.saveFailed", {
+											slotId: actualSlot,
+											filename: slotCache.filename,
+											error: err instanceof Error ? err.message : String(err),
+										});
+									}
+								);
+							} else {
+								logger.debug("llamaSlotCache.saveSkipped", {
+									filename: slotCache.filename,
+									reason: "no __verbose.id_slot in response (e.g. stream cancelled early)",
+								});
+							}
+						}
+					}
 				} finally {
 					this.llamaSpeed.end();
 					// Streaming overwrote the token usage display; refresh it now that

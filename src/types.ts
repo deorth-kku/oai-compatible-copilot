@@ -131,6 +131,24 @@ export interface HFModelItem {
 	strip_reminder_instructions?: boolean;
 
 	/**
+	 * EXPERIMENTAL: reuse the llama.cpp on-disk prompt (KV) cache across new
+	 * sessions. Only effective with `optimization: "llama.cpp"` and
+	 * `apiMode: "openai"`.
+	 *
+	 * On the first request of a new session the extension computes a cache id
+	 * from model (base id) + reasoning effort + sanitized system prompt + tools,
+	 * tries to `restore {cache_id}.bin` into an idle slot (via the server's
+	 * `/slots` endpoint, which must be enabled — default; `--no-slots` disables
+	 * it — and the server should be run with `--slot-save-path`), pins that
+	 * slot with `id_slot`, and — if the cache did not exist yet — saves it
+	 * after the stream ends so the next session can restore it.
+	 *
+	 * Known risk: if the model file behind the same id is swapped (or the KV
+	 * quantization changes), a stale `.bin` may restore and serve wrong KV.
+	 */
+	disk_kv_cache?: boolean;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".
