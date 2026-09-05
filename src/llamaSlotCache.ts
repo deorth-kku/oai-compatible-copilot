@@ -235,9 +235,9 @@ export async function restoreSlotCache(
 			logger.debug("llamaSlotCache.restore.notOk", { url, status: res.status, body: text });
 			return false;
 		}
-		const body = (await res.json()) as { n_restored?: unknown };
+		const body = (await res.json()) as Record<string, unknown>;
 		const ok = typeof body.n_restored === "number" && body.n_restored > 0;
-		logger.info("llamaSlotCache.restore", { url, n_restored: body.n_restored ?? 0, ok });
+		logger.info("llamaSlotCache.restore", { url, ...body });
 		return ok;
 	} catch (e) {
 		logger.debug("llamaSlotCache.restore.error", {
@@ -283,9 +283,9 @@ export async function saveSlotCache(
 			logger.debug("llamaSlotCache.save.notOk", { url, status: res.status, body: text });
 			return false;
 		}
-		const body = (await res.json()) as { n_saved?: unknown };
+		const body = (await res.json()) as Record<string, unknown>;
 		const ok = typeof body.n_saved === "number" && body.n_saved > 0;
-		logger.info("llamaSlotCache.save", { url, n_saved: body.n_saved ?? 0, ok });
+		logger.info("llamaSlotCache.save", { url, ...body });
 		return ok;
 	} catch (e) {
 		logger.debug("llamaSlotCache.save.error", {
