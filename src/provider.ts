@@ -31,9 +31,12 @@ import { logger } from "./logger";
 import { LlamaSpeedDisplay } from "./llamaSpeed";
 import {
 	computeSlotCacheId,
+	decideSlotCache,
 	extractSystemText,
 	fetchIdleSlot,
+	getRecordedCacheId,
 	getServerRootUrl,
+	recordCacheId,
 	restoreSlotCache,
 	saveSlotCache,
 } from "./llamaSlotCache";
@@ -569,14 +572,24 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				};
 				requestBody = openaiApi.prepareRequestBody(requestBody, um, options);
 
-				// Experimental llama.cpp disk KV cache reuse: only on the FIRST request
-				// of a new session (exactly system + injected-env user message + real
-				// user message). Later turns are handled by the regular VRAM KV cache.
-				// See llamaSlotCache.ts for the endpoint details.
-				let slotCache: { rootUrl: string; filename: string; timeoutMs: number } | undefined;
+				// Experimental llama.cpp disk KV cache reuse (session-aware): the
+				// restore/save decision is made per request from a matrix over
+				// (message count, per-conversation cache-id change). The cache id
+				// identifies the combination of model (base id), reasoning effort,
+				// sanitized system prompt and tools; a per-conversation Map in
+				// llamaSlotCache.ts tracks the previous id. See llamaSlotCache.ts
+				// for the matrix and the endpoint details.
+				let slotCache: {
+					rootUrl: string;
+					filename: string;
+					timeoutMs: number;
+					convId: string;
+					cacheId: string;
+					save: boolean;
+				} | undefined;
 				let pinnedSlot: number | undefined;
 				let slotRestored = false;
-				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true && messages.length === 3) {
+				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true) {
 					const rootUrl = getServerRootUrl(BASE_URL);
 					const cacheId = computeSlotCacheId({
 						model: parsedModelId.baseId,
@@ -591,35 +604,63 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						typeof um.llama_slot_timeout === "number" && um.llama_slot_timeout > 0
 							? um.llama_slot_timeout
 							: DEFAULT_LLAMA_SLOT_TIMEOUT_MS;
-					slotCache = { rootUrl, filename: `${cacheId}.bin`, timeoutMs: slotTimeoutMs };
-					// Find an idle slot and restore the disk cache into it. The restore
-					// is awaited: the request waits for it to finish so the restored
-					// slot is already warm when generation starts. Each call gets its
-					// OWN fresh timeout, merged with the chat request's cancellation.
-					pinnedSlot = await fetchIdleSlot(
+					// The conversation id was derived from the ORIGINAL (pre-sanitize)
+					// messages before this block (setConvIdFromMessages above).
+					const convId = openaiApi.getConvId();
+					const prevCacheId = getRecordedCacheId(convId);
+					const decision = decideSlotCache(messages.length, prevCacheId, cacheId);
+					slotCache = {
 						rootUrl,
-						parsedModelId.baseId,
-						requestHeaders,
-						slotDeadline(slotTimeoutMs, abortController.signal)
-					);
-					if (pinnedSlot !== undefined) {
-						slotRestored = await restoreSlotCache(
+						filename: `${cacheId}.bin`,
+						timeoutMs: slotTimeoutMs,
+						convId,
+						cacheId,
+						save: decision.save,
+					};
+					if (decision.restore) {
+						// Find an idle slot and restore the disk cache into it. The
+						// restore is awaited: the request waits for it to finish so
+						// the restored slot is already warm when generation starts.
+						// Each call gets its OWN fresh timeout, merged with the
+						// chat request's cancellation.
+						pinnedSlot = await fetchIdleSlot(
 							rootUrl,
 							parsedModelId.baseId,
-							pinnedSlot,
-							slotCache.filename,
 							requestHeaders,
 							slotDeadline(slotTimeoutMs, abortController.signal)
 						);
+						if (pinnedSlot !== undefined) {
+							slotRestored = await restoreSlotCache(
+								rootUrl,
+								parsedModelId.baseId,
+								pinnedSlot,
+								slotCache.filename,
+								requestHeaders,
+								slotDeadline(slotTimeoutMs, abortController.signal)
+							);
+						}
 					}
-					// Always send verbose: true while this experimental feature is active
-					// so we can learn the server's actual slot from __verbose.id_slot.
-					requestBody.verbose = true;
+					// Send verbose: true only when this request may need the
+					// server's actual slot id from __verbose.id_slot: a restore was
+					// attempted (pinned-slot mismatch check) or a save may follow a
+					// restore miss. F/F matrix cells never read id_slot, so verbose
+					// is omitted there. (The status-bar timings report is driven by
+					// timings_per_token/return_progress in prepareRequestBody, not by
+					// verbose.)
+					if (decision.restore) {
+						requestBody.verbose = true;
+					}
 					if (slotRestored) {
 						requestBody.id_slot = pinnedSlot;
 					}
 					logger.debug("llamaSlotCache.decision", {
+						convId,
+						cacheId,
+						prevCacheId,
 						filename: slotCache.filename,
+						messageCount: messages.length,
+						restore: decision.restore,
+						save: decision.save,
 						idleSlot: pinnedSlot,
 						restored: slotRestored,
 						idSlot: slotRestored ? pinnedSlot : undefined,
@@ -670,12 +711,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 								actual: actualSlot,
 							});
 						}
-						if (!slotRestored) {
+						// The matrix's save flag is a NECESSARY condition only: the
+						// existing "only save on a restore miss" rule still applies —
+						// a successful restore already has the .bin on disk.
+						if (slotCache.save && !slotRestored) {
 							// The disk cache did not exist yet (or the restore failed):
 							// save it from the slot the server actually used so the next
-							// new session can restore it. Fire-and-forget — do not block
-							// on it, and it must not carry the request's abort signal
-							// (aborted in `finally` below).
+							// session (or a mid-session combination change) can restore
+							// it. Fire-and-forget — do not block on it, and it must not
+							// carry the request's abort signal (aborted in `finally` below).
 							if (actualSlot !== undefined) {
 								// Fire-and-forget: bounded ONLY by the timeout — the chat
 								// request's cancellation signal is deliberately NOT used
@@ -701,6 +745,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 								});
 							}
 						}
+						// Record the combination for this conversation so later requests
+						// can apply the decision matrix. Only on the non-throwing
+						// completion path (a cancelled stream counts as completed): a
+						// FAILED first request leaves no record, so its retry is a
+						// first fill again (restore + save).
+						recordCacheId(slotCache.convId, slotCache.cacheId);
 					}
 				} finally {
 					this.llamaSpeed.end();

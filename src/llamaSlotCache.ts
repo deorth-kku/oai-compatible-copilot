@@ -8,16 +8,23 @@
  * cache can be restored into an idle slot before the first request, avoiding a
  * full prompt re-prefill.
  *
- * Flow (see provider.ts):
- *   1. `GET  {root}/slots?model={baseId}` → first idle slot id (router mode
- *      REQUIRES the `?model=` param — undocumented; 400 without it).
- *   2. `POST {root}/slots/{id}?action=restore` with JSON body
+ * Session-aware flow (see provider.ts and {@link decideSlotCache}):
+ *   0. The provider decides `(restore, save)` per request from a matrix over
+ *      (message count, per-conversation cache-id change). The previous cache
+ *      id is tracked in this module's Map, keyed by the conversation id from
+ *      `CommonApi.computeConvId` (per-session UUID in the system prompt).
+ *   1. If restore: `GET {root}/slots?model={baseId}` → best idle slot id
+ *      (router mode REQUIRES the `?model=` param — undocumented; 400 without
+ *      it), then `POST {root}/slots/{id}?action=restore` with JSON body
  *      `{ "filename": "{cacheId}.bin", "model": "{baseId}" }` (awaited).
- *   3. Chat request with `verbose: true` (+ `id_slot` when restore succeeded);
- *      the server's actual slot is learned from `__verbose.id_slot`.
- *   4. If restore failed, `POST {root}/slots/{id}?action=save` with the same
- *      JSON body, fire-and-forget after the stream ends so the cache exists
- *      next time.
+ *   2. Chat request with `verbose: true` when a restore was attempted
+ *      (+ `id_slot` when the restore succeeded); the server's actual slot is
+ *      learned from `__verbose.id_slot`.
+ *   3. If the decision wanted a save AND the restore missed,
+ *      `POST {root}/slots/{id}?action=save` with the same JSON body,
+ *      fire-and-forget after the stream ends so the cache exists next time.
+ *   4. The cache id is recorded for the conversation (non-throwing completion
+ *      only) so later requests can apply the matrix.
  *
  *   Note: GET /slots takes `model` as a QUERY param, but the POST actions take
  *   `model` in the JSON BODY (400 "model name is missing" otherwise).
@@ -294,4 +301,118 @@ export async function saveSlotCache(
 		});
 		return false;
 	}
+}
+
+// =====================================================================
+// Session-aware decision matrix
+// =====================================================================
+
+/**
+ * Per-conversation disk KV cache id tracking.
+ *
+ * Keyed by the conversation id derived from the request history (see
+ * `CommonApi.computeConvId` — the per-session UUID embedded in the system
+ * prompt). The extension process is shared across all chat sessions, so this
+ * Map is module-level. It is in-memory only: after an extension reload every
+ * conversation is a "first fill" again, which the matrix handles (self-healing
+ * — at len > 3 a first fill does no slot work).
+ */
+const _cacheIdByConv = new Map<string, string>();
+
+/** Maximum number of tracked conversations; oldest (least recently used) evicted. */
+const CACHE_ID_MAP_MAX = 512;
+
+/**
+ * The last disk KV cache id recorded for a conversation, or `undefined` if the
+ * conversation has never completed a request under this feature.
+ */
+export function getRecordedCacheId(convId: string): string | undefined {
+	return _cacheIdByConv.get(convId);
+}
+
+/**
+ * Record (or update) the disk KV cache id for a conversation.
+ *
+ * The provider calls this only when the stream completes without throwing
+ * (user cancellation counts as a normal completion). A FAILED first request
+ * therefore leaves no record, so its retry is treated as a first fill again
+ * (restore + save).
+ *
+ * Re-recording an existing conversation refreshes its recency (it moves to
+ * the tail of the insertion-ordered Map, which is the LRU order).
+ */
+export function recordCacheId(convId: string, cacheId: string): void {
+	// Refresh recency: re-insert at the tail.
+	_cacheIdByConv.delete(convId);
+	_cacheIdByConv.set(convId, cacheId);
+	// Evict the oldest entries when over the cap.
+	let overflow = _cacheIdByConv.size - CACHE_ID_MAP_MAX;
+	while (overflow > 0) {
+		const oldest = _cacheIdByConv.keys().next().value;
+		if (oldest === undefined) {
+			break;
+		}
+		_cacheIdByConv.delete(oldest);
+		overflow--;
+	}
+}
+
+/** Clear all tracked conversations (test isolation). */
+export function clearCacheIdMap(): void {
+	_cacheIdByConv.clear();
+}
+
+/**
+ * The restore/save decision for a request under the disk KV cache feature.
+ *
+ * Decision matrix (user-confirmed):
+ *
+ * | len \ cache_id | ① none→new (first fill) | ② unchanged | ③ old≠new (changed) |
+ * |----------------|-------------------------|-------------|---------------------|
+ * | < 3            | F / F                   | F / F       | F / F               |
+ * | = 3            | R / S                   | F / F       | R / S               |
+ * | > 3            | F / F                   | F / F       | R / F               |
+ *
+ * - `restore`: attempt `GET /slots` + the awaited restore, and pin `id_slot`
+ *   when the restore succeeds.
+ * - `save`: the save is *desired* — a NECESSARY condition only. The actual
+ *   save also requires that a restore was attempted AND missed (the extension
+ *   only saves what it did not restore — a successful restore already has the
+ *   `.bin` on disk). Every save cell is also a restore cell, so the
+ *   combination is consistent.
+ *
+ * Rationale:
+ * - `len < 3`: not a well-formed conversation turn of this feature (system +
+ *   injected env + user message); never touch the disk cache.
+ * - `= 3, first fill / changed`: the context is still short (3 messages), so
+ *   saving is cheap and establishes the `.bin` for future sessions; a restore
+ *   is a free long-shot that the combination was used in another session.
+ *   `= 3, unchanged` is the first message being edited/resubmitted: the `.bin`
+ *   already exists (from this session's first request) and the conversation's
+ *   KV is in VRAM — no slot work.
+ * - `> 3`: the context is long at response time, so saving would persist a
+ *   mostly-unusable cache (disk waste) — never save. A changed combination is
+ *   still worth a restore attempt: it may have been used at an earlier
+ *   new-session creation, in which case a `.bin` exists.
+ */
+export function decideSlotCache(
+	messageCount: number,
+	prevCacheId: string | undefined,
+	cacheId: string
+): { restore: boolean; save: boolean } {
+	if (messageCount < 3) {
+		return { restore: false, save: false };
+	}
+	if (messageCount === 3) {
+		// First fill (no record yet) or a changed combination (e.g. the first
+		// message resubmitted after changing the reasoning level): the context
+		// is short, so restore (long-shot) + save (cheap, establishes the .bin).
+		const firstFillOrChanged = prevCacheId === undefined || prevCacheId !== cacheId;
+		return { restore: firstFillOrChanged, save: firstFillOrChanged };
+	}
+	// len > 3: never save (long context). Restore only when the combination
+	// changed since this conversation's last recorded request — the
+	// combination may have been used at an earlier new-session creation.
+	const changed = prevCacheId !== undefined && prevCacheId !== cacheId;
+	return { restore: changed, save: false };
 }

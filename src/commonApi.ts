@@ -230,6 +230,15 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	}
 
 	/**
+	 * The conversation id derived by {@link setConvIdFromMessages} ("" until it
+	 * is set). Used by the provider to track the llama.cpp disk KV cache id
+	 * per conversation (see `llamaSlotCache.ts`).
+	 */
+	getConvId(): string {
+		return this._convId;
+	}
+
+	/**
 	 * Stable conversation id derived from the request history.
 	 *
 	 * Preferred: the first non-empty **system**-role message. Copilot injects a

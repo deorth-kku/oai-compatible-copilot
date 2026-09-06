@@ -1,10 +1,14 @@
 import * as assert from "assert";
 import {
 	computeSlotCacheId,
+	clearCacheIdMap,
+	decideSlotCache,
 	extractSystemText,
 	fetchIdleSlot,
 	findIdleSlot,
+	getRecordedCacheId,
 	getServerRootUrl,
+	recordCacheId,
 	restoreSlotCache,
 	saveSlotCache,
 	type LlamaSlot,
@@ -298,6 +302,93 @@ suite("llamaSlotCache", () => {
 		test("save fails on a non-200 response", async () => {
 			stubFetch(async () => json(500, { error: "boom" }));
 			assert.strictEqual(await saveSlotCache("http://h:8080", "m", 1, "a.bin", headers, signal), false);
+		});
+	});
+
+	suite("decideSlotCache (decision matrix)", () => {
+		const A = "cache-a";
+		const B = "cache-b";
+
+		test("len < 3 → no restore, no save (all prev states)", () => {
+			for (const prev of [undefined, A, B]) {
+				for (const len of [0, 1, 2]) {
+					assert.deepStrictEqual(decideSlotCache(len, prev, A), { restore: false, save: false });
+				}
+			}
+		});
+
+		test("len = 3, first fill (no prev) → restore + save", () => {
+			assert.deepStrictEqual(decideSlotCache(3, undefined, A), { restore: true, save: true });
+		});
+
+		test("len = 3, unchanged → no restore, no save (first message resubmitted)", () => {
+			assert.deepStrictEqual(decideSlotCache(3, A, A), { restore: false, save: false });
+		});
+
+		test("len = 3, changed → restore + save", () => {
+			assert.deepStrictEqual(decideSlotCache(3, A, B), { restore: true, save: true });
+		});
+
+		test("len > 3, first fill (no prev) → no restore, no save", () => {
+			assert.deepStrictEqual(decideSlotCache(5, undefined, A), { restore: false, save: false });
+		});
+
+		test("len > 3, unchanged → no restore, no save", () => {
+			assert.deepStrictEqual(decideSlotCache(5, A, A), { restore: false, save: false });
+		});
+
+		test("len > 3, changed → restore, no save (long context: disk waste)", () => {
+			assert.deepStrictEqual(decideSlotCache(5, A, B), { restore: true, save: false });
+		});
+	});
+
+	suite("per-conversation cache id map", () => {
+		// mocha tdd interface: `setup`, not `beforeEach`.
+		setup(() => {
+			clearCacheIdMap();
+		});
+
+		test("getRecordedCacheId returns undefined before recording", () => {
+			assert.strictEqual(getRecordedCacheId("conv-1"), undefined);
+		});
+
+		test("recordCacheId stores and getRecordedCacheId returns it", () => {
+			recordCacheId("conv-1", "abc");
+			assert.strictEqual(getRecordedCacheId("conv-1"), "abc");
+		});
+
+		test("recordCacheId overwrites the previous id", () => {
+			recordCacheId("conv-1", "abc");
+			recordCacheId("conv-1", "def");
+			assert.strictEqual(getRecordedCacheId("conv-1"), "def");
+		});
+
+		test("conversations are independent", () => {
+			recordCacheId("conv-1", "abc");
+			recordCacheId("conv-2", "def");
+			assert.strictEqual(getRecordedCacheId("conv-1"), "abc");
+			assert.strictEqual(getRecordedCacheId("conv-2"), "def");
+		});
+
+		test("re-recording refreshes recency (oldest entry evicted instead)", () => {
+			recordCacheId("conv-1", "a");
+			recordCacheId("conv-2", "b");
+			recordCacheId("conv-1", "a2"); // conv-1 becomes most recent; conv-2 is oldest
+			// Fill to just over the cap (512): exactly one entry is evicted.
+			for (let i = 3; i <= 513; i++) {
+				recordCacheId(`conv-${i}`, `x${i}`);
+			}
+			assert.strictEqual(getRecordedCacheId("conv-2"), undefined); // oldest evicted
+			assert.strictEqual(getRecordedCacheId("conv-1"), "a2"); // still present
+		});
+
+		test("evicts the oldest entry when over the cap", () => {
+			for (let i = 1; i <= 513; i++) {
+				recordCacheId(`conv-${i}`, `x${i}`);
+			}
+			assert.strictEqual(getRecordedCacheId("conv-1"), undefined);
+			assert.strictEqual(getRecordedCacheId("conv-2"), "x2");
+			assert.strictEqual(getRecordedCacheId("conv-513"), "x513");
 		});
 	});
 });
