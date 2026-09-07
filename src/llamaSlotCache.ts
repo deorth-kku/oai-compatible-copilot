@@ -13,17 +13,23 @@
  *      (message count, per-conversation cache-id change). The previous cache
  *      id is tracked in this module's Map, keyed by the conversation id from
  *      `CommonApi.computeConvId` (per-session UUID in the system prompt).
- *   1. If restore: `GET {root}/slots?model={baseId}` → best idle slot id
- *      (router mode REQUIRES the `?model=` param — undocumented; 400 without
- *      it), then `POST {root}/slots/{id}?action=restore` with JSON body
+ *   1. `GET {root}/slots?model={baseId}` on EVERY gated request (router mode
+ *      REQUIRES the `?model=` param — undocumented; 400 without it). The same
+ *      response serves the idle-slot selection AND the restart check: when
+ *      all slots are empty ({@link allSlotsEmpty} — no slot has ever been
+ *      used since the server started, i.e. llama.cpp restarted), the restore
+ *      branch is forced even when the matrix said F.
+ *   2. If restore (matrix or forced): best idle slot id from the same
+ *      response, then `POST {root}/slots/{id}?action=restore` with JSON body
  *      `{ "filename": "{cacheId}.bin", "model": "{baseId}" }` (awaited).
- *   2. Chat request with `verbose: true` when a restore was attempted
+ *   3. Chat request with `verbose: true` when a restore was attempted
  *      (+ `id_slot` when the restore succeeded); the server's actual slot is
  *      learned from `__verbose.id_slot`.
- *   3. If the decision wanted a save AND the restore missed,
- *      `POST {root}/slots/{id}?action=save` with the same JSON body,
- *      fire-and-forget after the stream ends so the cache exists next time.
- *   4. The cache id is recorded for the conversation (non-throwing completion
+ *   4. If the decision wanted a save (first turn, len === 3) AND a restore was
+ *      attempted and missed, `POST {root}/slots/{id}?action=save` with the
+ *      same JSON body, fire-and-forget after the stream ends so the cache
+ *      exists next time.
+ *   5. The cache id is recorded for the conversation (non-throwing completion
  *      only) so later requests can apply the matrix.
  *
  *   Note: GET /slots takes `model` as a QUERY param, but the POST actions take
@@ -156,26 +162,48 @@ export function findIdleSlot(slots: readonly LlamaSlot[]): number | undefined {
 }
 
 /**
- * `GET {root}/slots?model={modelId}` and return the best idle slot id
- * (selection rule: see {@link findIdleSlot}).
+ * Whether ALL slots are empty — the "llama.cpp restarted" signal.
+ *
+ * The server emits `n_prompt_tokens` on a slot only while that slot has a
+ * current or previous task (`server_slot::to_json` writes the field from
+ * `task ? task : task_prev`). A slot that has never been used since the
+ * server started therefore LACKS the field; a slot that WAS used keeps it
+ * (even `0` after a purge/erase). So every slot lacking `n_prompt_tokens`
+ * means no slot has ever held a prompt since the server started — the
+ * in-memory KV cache is gone and a disk `.bin` can be restored without
+ * discarding live VRAM KV.
+ *
+ * Conservative by design: a purged-but-used slot counts as NOT empty, so the
+ * restart override can miss a restore opportunity but never discards live
+ * VRAM KV. Busy slots always carry the field, so they are never empty.
+ *
+ * An empty slot array is NOT "all empty": there is nothing to restore into,
+ * and the caller should treat it as "feature unavailable".
+ */
+export function allSlotsEmpty(slots: readonly LlamaSlot[]): boolean {
+	return slots.length > 0 && slots.every((s) => typeof s?.n_prompt_tokens !== "number");
+}
+
+/**
+ * `GET {root}/slots?model={modelId}` and return the full slot array.
  *
  * The `?model=` query param is REQUIRED in llama.cpp *router mode*
  * (undocumented — the server answers 400 "model name is missing from the
  * request" without it).
  *
- * Returns `undefined` on any failure (400/404/503/network, non-array body,
- * empty list, all slots busy) — callers must treat this as "feature
- * unavailable" and continue the chat request without slot pinning.
+ * Returns `undefined` on any failure (400/404/503/network, non-array body) —
+ * callers must treat this as "feature unavailable" and continue the chat
+ * request without slot pinning or the restart check.
  *
  * `signal` is the caller-owned deadline (e.g. the per-model timeout merged
  * with the chat request's cancellation); it is forwarded to `fetch` as-is.
  */
-export async function fetchIdleSlot(
+export async function fetchSlots(
 	rootUrl: string,
 	modelId: string,
 	headers: Record<string, string>,
 	signal: AbortSignal
-): Promise<number | undefined> {
+): Promise<LlamaSlot[] | undefined> {
 	const url = `${rootUrl}/slots?model=${encodeURIComponent(modelId)}`;
 	try {
 		const res = await fetch(url, {
@@ -193,13 +221,7 @@ export async function fetchIdleSlot(
 			logger.debug("llamaSlotCache.slots.notArray", { url });
 			return undefined;
 		}
-		const idle = findIdleSlot(slots as LlamaSlot[]);
-		if (idle !== undefined) {
-			logger.debug("llamaSlotCache.slots.idleFound", { url, slotId: idle, total: slots.length });
-		} else {
-			logger.debug("llamaSlotCache.slots.noIdle", { url, total: slots.length });
-		}
-		return idle;
+		return slots as LlamaSlot[];
 	} catch (e) {
 		logger.debug("llamaSlotCache.slots.error", {
 			url,
@@ -207,6 +229,37 @@ export async function fetchIdleSlot(
 		});
 		return undefined;
 	}
+}
+
+/**
+ * `GET {root}/slots?model={modelId}` and return the best idle slot id
+ * (selection rule: see {@link findIdleSlot}).
+ *
+ * Thin wrapper over {@link fetchSlots} — kept for callers/tests that only
+ * need the idle slot id.
+ *
+ * Returns `undefined` on any failure (see {@link fetchSlots}) or when no
+ * idle slot exists (empty list, all slots busy).
+ *
+ * `signal` is the caller-owned deadline; it is forwarded to `fetch` as-is.
+ */
+export async function fetchIdleSlot(
+	rootUrl: string,
+	modelId: string,
+	headers: Record<string, string>,
+	signal: AbortSignal
+): Promise<number | undefined> {
+	const slots = await fetchSlots(rootUrl, modelId, headers, signal);
+	if (slots === undefined) {
+		return undefined;
+	}
+	const idle = findIdleSlot(slots);
+	if (idle !== undefined) {
+		logger.debug("llamaSlotCache.slots.idleFound", { slotId: idle, total: slots.length });
+	} else {
+		logger.debug("llamaSlotCache.slots.noIdle", { total: slots.length });
+	}
+	return idle;
 }
 
 /**
@@ -370,26 +423,33 @@ export function clearCacheIdMap(): void {
  * | len \ cache_id | ① none→new (first fill) | ② unchanged | ③ old≠new (changed) |
  * |----------------|-------------------------|-------------|---------------------|
  * | < 3            | F / F                   | F / F       | F / F               |
- * | = 3            | R / S                   | F / F       | R / S               |
+ * | = 3            | R / S                   | F / S       | R / S               |
  * | > 3            | F / F                   | F / F       | R / F               |
  *
- * - `restore`: attempt `GET /slots` + the awaited restore, and pin `id_slot`
- *   when the restore succeeds.
- * - `save`: the save is *desired* — a NECESSARY condition only. The actual
- *   save also requires that a restore was attempted AND missed (the extension
- *   only saves what it did not restore — a successful restore already has the
- *   `.bin` on disk). Every save cell is also a restore cell, so the
- *   combination is consistent.
+ * - `restore`: attempt the awaited restore, and pin `id_slot` when it
+ *   succeeds. The provider ORs in a runtime override: when `GET /slots`
+ *   reports ALL slots empty ({@link allSlotsEmpty} — llama.cpp restarted, so
+ *   the in-memory KV is gone), the restore branch is forced even for matrix-F
+ *   cells (restoring then cannot discard live VRAM KV).
+ * - `save`: the save is *desired* — a NECESSARY condition only. It is
+ *   `len === 3` (the context is still short, so the `.bin` is cheap to write
+ *   and fully reusable). The actual save additionally requires that a restore
+ *   was attempted AND missed — the extension only saves what it did not
+ *   restore (a successful restore already has the `.bin` on disk), and NOT
+ *   attempting a restore is NOT a restore miss. So `= 3, unchanged` saves
+ *   only when the all-slots-empty override forced a restore that then missed
+ *   (e.g. the `.bin` was deleted).
  *
  * Rationale:
  * - `len < 3`: not a well-formed conversation turn of this feature (system +
- *   injected env + user message); never touch the disk cache.
+ *   injected env + user message); never touch the disk cache. In principle
+ *   unreachable — a new session's first request is exactly 3 messages.
  * - `= 3, first fill / changed`: the context is still short (3 messages), so
  *   saving is cheap and establishes the `.bin` for future sessions; a restore
  *   is a free long-shot that the combination was used in another session.
- *   `= 3, unchanged` is the first message being edited/resubmitted: the `.bin`
- *   already exists (from this session's first request) and the conversation's
- *   KV is in VRAM — no slot work.
+ *   `= 3, unchanged` is the first message being edited/resubmitted: no restore
+ *   by the matrix — the `.bin` already exists (from this session's first
+ *   request) and the conversation's KV is in VRAM.
  * - `> 3`: the context is long at response time, so saving would persist a
  *   mostly-unusable cache (disk waste) — never save. A changed combination is
  *   still worth a restore attempt: it may have been used at an earlier
@@ -400,6 +460,11 @@ export function decideSlotCache(
 	prevCacheId: string | undefined,
 	cacheId: string
 ): { restore: boolean; save: boolean } {
+	// Save is desired only on the first turn (len === 3): the context is short,
+	// so the .bin is cheap to write and fully reusable. At len > 3 the context
+	// is long at response time and only a short head would be reusable — disk
+	// waste.
+	const save = messageCount === 3;
 	if (messageCount < 3) {
 		return { restore: false, save: false };
 	}
@@ -407,12 +472,16 @@ export function decideSlotCache(
 		// First fill (no record yet) or a changed combination (e.g. the first
 		// message resubmitted after changing the reasoning level): the context
 		// is short, so restore (long-shot) + save (cheap, establishes the .bin).
+		// Unchanged: no restore by the matrix — the .bin already exists from
+		// this session's first request and the conversation's KV is in VRAM
+		// (the provider's all-slots-empty override can still force a restore,
+		// in which case a miss saves).
 		const firstFillOrChanged = prevCacheId === undefined || prevCacheId !== cacheId;
-		return { restore: firstFillOrChanged, save: firstFillOrChanged };
+		return { restore: firstFillOrChanged, save };
 	}
 	// len > 3: never save (long context). Restore only when the combination
 	// changed since this conversation's last recorded request — the
 	// combination may have been used at an earlier new-session creation.
 	const changed = prevCacheId !== undefined && prevCacheId !== cacheId;
-	return { restore: changed, save: false };
+	return { restore: changed, save };
 }

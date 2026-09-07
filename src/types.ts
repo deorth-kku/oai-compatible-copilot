@@ -142,14 +142,22 @@ export interface HFModelItem {
 	 *   message): restore `{cache_id}.bin` into an idle slot (via the server's
 	 *   `/slots` endpoint, which must be enabled — default; `--no-slots`
 	 *   disables it — and the server should be run with `--slot-save-path`),
-	 *   pin it with `id_slot`, and — if the cache did not exist yet — save it
-	 *   after the stream ends;
+	 *   pin it with `id_slot`, and — if the restore missed (the cache did not
+	 *   exist yet) — save it after the stream ends;
 	 * - resubmitting the FIRST message with an unchanged combination: no slot
 	 *   work (the `.bin` already exists and the conversation's KV is in VRAM);
 	 * - changing the combination mid-conversation (reasoning level, model or
 	 *   tools): attempt a restore (the combination may have been used at an
 	 *   earlier new-session creation) but never save — the context is long at
 	 *   that point and only a short head of the cache would be reusable.
+	 *
+	 * Restart-aware: `GET /slots` is issued on every gated request, and when
+	 * ALL slots are empty (no slot has ever been used since the server
+	 * started — i.e. llama.cpp restarted and the in-memory KV is gone), a
+	 * restore is attempted even in the cases above that would normally do no
+	 * slot work (restoring then cannot discard live VRAM KV). A save happens
+	 * only on the first turn (3 messages) after an attempted restore that
+	 * missed — e.g. refilling a deleted `.bin`.
 	 *
 	 * Known risk: if the model file behind the same id is swapped (or the KV
 	 * quantization changes), a stale `.bin` may restore and serve wrong KV.

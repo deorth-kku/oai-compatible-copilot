@@ -1,10 +1,12 @@
 import * as assert from "assert";
 import {
+	allSlotsEmpty,
 	computeSlotCacheId,
 	clearCacheIdMap,
 	decideSlotCache,
 	extractSystemText,
 	fetchIdleSlot,
+	fetchSlots,
 	findIdleSlot,
 	getRecordedCacheId,
 	getServerRootUrl,
@@ -192,6 +194,31 @@ suite("llamaSlotCache", () => {
 		});
 	});
 
+	suite("allSlotsEmpty", () => {
+		const fresh = (id: number): LlamaSlot => ({ id, is_processing: false });
+		const used = (id: number, tokens: number): LlamaSlot => ({ id, is_processing: false, n_prompt_tokens: tokens });
+
+		test("an empty slot array is NOT all empty (nothing to restore into)", () => {
+			assert.strictEqual(allSlotsEmpty([]), false);
+		});
+
+		test("all fresh slots (no n_prompt_tokens) → true (llama.cpp restarted)", () => {
+			assert.strictEqual(allSlotsEmpty([fresh(0), fresh(1)]), true);
+		});
+
+		test("any used slot → false", () => {
+			assert.strictEqual(allSlotsEmpty([fresh(0), used(1, 42)]), false);
+		});
+
+		test("a purged slot keeps n_prompt_tokens: 0 → false (conservative)", () => {
+			assert.strictEqual(allSlotsEmpty([used(0, 0), fresh(1)]), false);
+		});
+
+		test("a busy slot always carries the field → false", () => {
+			assert.strictEqual(allSlotsEmpty([{ id: 0, is_processing: true, n_prompt_tokens: 10 }]), false);
+		});
+	});
+
 	suite("slots HTTP calls", () => {
 		const originalFetch = globalThis.fetch;
 		const calls: { url: string; init?: RequestInit }[] = [];
@@ -250,6 +277,58 @@ suite("llamaSlotCache", () => {
 				});
 			const controller = new AbortController();
 			const pending = fetchIdleSlot("http://h:8080", "m", headers, controller.signal);
+			controller.abort();
+			assert.strictEqual(await pending, undefined);
+		});
+
+		test("fetchSlots returns the full slot array", async () => {
+			const slots = [
+				{ id: 0, is_processing: false, n_prompt_tokens: 5 },
+				{ id: 1, is_processing: false },
+			];
+			stubFetch(async () => json(200, slots));
+			const result = await fetchSlots("http://h:8080", "my/model", headers, signal);
+			assert.deepStrictEqual(result, slots);
+			assert.strictEqual(calls[0].url, "http://h:8080/slots?model=my%2Fmodel");
+		});
+
+		test("fetchSlots returns undefined on a non-array body", async () => {
+			stubFetch(async () => json(200, { slots: [] }));
+			assert.strictEqual(await fetchSlots("http://h:8080", "m", headers, signal), undefined);
+		});
+
+		test("fetchSlots returns undefined on a non-200 response (e.g. 501 --no-slots)", async () => {
+			stubFetch(async () => json(501, { error: "This server does not support slots endpoint." }));
+			assert.strictEqual(await fetchSlots("http://h:8080", "m", headers, signal), undefined);
+		});
+
+		test("fetchSlots returns undefined on a network error", async () => {
+			stubFetch(async () => {
+				throw new Error("ECONNREFUSED");
+			});
+			assert.strictEqual(await fetchSlots("http://h:8080", "m", headers, signal), undefined);
+		});
+
+		test("fetchSlots returns undefined when the caller's signal aborts", async () => {
+			// A server that hangs until the caller's signal aborts.
+			globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) =>
+				new Promise<Response>((_resolve, reject) => {
+					const s = init?.signal;
+					if (!s) {
+						return; // hang forever
+					}
+					if (s.aborted) {
+						reject(new DOMException("The operation was aborted.", "AbortError"));
+						return;
+					}
+					s.addEventListener(
+						"abort",
+						() => reject(new DOMException("The operation was aborted.", "AbortError")),
+						{ once: true }
+					);
+				});
+			const controller = new AbortController();
+			const pending = fetchSlots("http://h:8080", "m", headers, controller.signal);
 			controller.abort();
 			assert.strictEqual(await pending, undefined);
 		});
@@ -321,8 +400,8 @@ suite("llamaSlotCache", () => {
 			assert.deepStrictEqual(decideSlotCache(3, undefined, A), { restore: true, save: true });
 		});
 
-		test("len = 3, unchanged → no restore, no save (first message resubmitted)", () => {
-			assert.deepStrictEqual(decideSlotCache(3, A, A), { restore: false, save: false });
+		test("len = 3, unchanged → no restore by the matrix, save desired (first message resubmitted; the actual save still needs an attempted restore miss)", () => {
+			assert.deepStrictEqual(decideSlotCache(3, A, A), { restore: false, save: true });
 		});
 
 		test("len = 3, changed → restore + save", () => {

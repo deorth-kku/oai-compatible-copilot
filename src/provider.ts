@@ -30,10 +30,12 @@ import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
 import { LlamaSpeedDisplay } from "./llamaSpeed";
 import {
+	allSlotsEmpty,
 	computeSlotCacheId,
 	decideSlotCache,
 	extractSystemText,
-	fetchIdleSlot,
+	fetchSlots,
+	findIdleSlot,
 	getRecordedCacheId,
 	getServerRootUrl,
 	recordCacheId,
@@ -589,6 +591,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				} | undefined;
 				let pinnedSlot: number | undefined;
 				let slotRestored = false;
+				// Whether a restore was ATTEMPTED (matrix R, or forced by the
+				// all-slots-empty restart override). The post-stream save is
+				// gated on this: "not attempting a restore" is not a restore
+				// miss.
+				let slotRestoreRequested = false;
 				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true) {
 					const rootUrl = getServerRootUrl(BASE_URL);
 					const cacheId = computeSlotCacheId({
@@ -617,18 +624,29 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						cacheId,
 						save: decision.save,
 					};
-					if (decision.restore) {
+					// GET /slots is fetched on EVERY gated request (not just matrix-R
+					// cells): the same response serves the idle-slot selection AND
+					// the restart check. All slots empty (no slot has ever been used
+					// since the server started) means llama.cpp restarted — the
+					// in-memory KV is gone — so the restore branch is forced even
+					// for matrix-F cells (restoring then cannot discard live VRAM
+					// KV). A failed GET means "feature unavailable": no forced R.
+					const slots = await fetchSlots(
+						rootUrl,
+						parsedModelId.baseId,
+						requestHeaders,
+						slotDeadline(slotTimeoutMs, abortController.signal)
+					);
+					const allEmpty = slots !== undefined && allSlotsEmpty(slots);
+					const restore = decision.restore || allEmpty;
+					slotRestoreRequested = restore;
+					if (restore && slots !== undefined) {
 						// Find an idle slot and restore the disk cache into it. The
 						// restore is awaited: the request waits for it to finish so
 						// the restored slot is already warm when generation starts.
 						// Each call gets its OWN fresh timeout, merged with the
 						// chat request's cancellation.
-						pinnedSlot = await fetchIdleSlot(
-							rootUrl,
-							parsedModelId.baseId,
-							requestHeaders,
-							slotDeadline(slotTimeoutMs, abortController.signal)
-						);
+						pinnedSlot = findIdleSlot(slots);
 						if (pinnedSlot !== undefined) {
 							slotRestored = await restoreSlotCache(
 								rootUrl,
@@ -640,14 +658,14 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 							);
 						}
 					}
-					// Send verbose: true only when this request may need the
-					// server's actual slot id from __verbose.id_slot: a restore was
-					// attempted (pinned-slot mismatch check) or a save may follow a
-					// restore miss. F/F matrix cells never read id_slot, so verbose
-					// is omitted there. (The status-bar timings report is driven by
-					// timings_per_token/return_progress in prepareRequestBody, not by
-					// verbose.)
-					if (decision.restore) {
+					// Send verbose: true only when a restore was attempted (matrix or
+					// forced): the server's actual slot id from __verbose.id_slot is
+					// needed for the pinned-slot mismatch check and the save target
+					// slot. No-restore cells never read id_slot, so verbose is
+					// omitted there. (The status-bar timings report is driven by
+					// timings_per_token/return_progress in prepareRequestBody, not
+					// by verbose.)
+					if (restore) {
 						requestBody.verbose = true;
 					}
 					if (slotRestored) {
@@ -659,8 +677,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						prevCacheId,
 						filename: slotCache.filename,
 						messageCount: messages.length,
-						restore: decision.restore,
+						decisionRestore: decision.restore,
 						save: decision.save,
+						allEmpty,
+						restore,
 						idleSlot: pinnedSlot,
 						restored: slotRestored,
 						idSlot: slotRestored ? pinnedSlot : undefined,
@@ -711,10 +731,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 								actual: actualSlot,
 							});
 						}
-						// The matrix's save flag is a NECESSARY condition only: the
-						// existing "only save on a restore miss" rule still applies —
-						// a successful restore already has the .bin on disk.
-						if (slotCache.save && !slotRestored) {
+						// The matrix's save flag is a NECESSARY condition only: a
+						// restore must have been ATTEMPTED and missed — a successful
+						// restore already has the .bin on disk, and NOT attempting a
+						// restore is not a restore miss (e.g. =3 unchanged without a
+						// restart: the .bin already exists).
+						if (slotCache.save && slotRestoreRequested && !slotRestored) {
 							// The disk cache did not exist yet (or the restore failed):
 							// save it from the slot the server actually used so the next
 							// session (or a mid-session combination change) can restore
