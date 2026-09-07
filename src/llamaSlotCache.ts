@@ -106,7 +106,16 @@ export function computeSlotCacheId(parts: SlotCacheIdParts): string {
 		tools: parts.tools ?? [],
 		toolChoice: parts.toolChoice ?? "auto",
 	});
-	return createHash("sha256").update(payload).digest("hex");
+	const digest = createHash("sha256").update(payload).digest("hex");
+	logger.debug("llamaSlotCache.cacheId", {
+		reasoning_effort: parts.reasoning,
+		model_id: parts.model,
+		system_prompt_len: parts.system.length,
+		tools_count: Array.isArray(parts.tools) ? parts.tools.length : 0,
+		tool_choice: JSON.stringify(parts.toolChoice ?? "auto"),
+		cache_id: digest,
+	});
+	return digest;
 }
 
 /**
