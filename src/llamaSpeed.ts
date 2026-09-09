@@ -17,7 +17,7 @@ export interface LlamaSpeedState {
 	phase: LlamaSpeedPhase;
 	/** Human-readable single line, e.g. `PP 943.0 t/s 45%`. */
 	line: string;
-	/** Secondary info for the tooltip, e.g. `prompt 300/512 · cache 128`. */
+	/** Secondary info for the tooltip, e.g. `prompt 128/512 · cache 25.0%`. */
 	detail: string;
 }
 
@@ -184,10 +184,14 @@ export function parseLlamaSpeed(parsed: Record<string, unknown>): LlamaSpeedStat
 		const processed = num(p.processed);
 		const timeMs = num(p.time_ms);
 		if (total !== undefined && cache !== undefined && processed !== undefined && timeMs !== undefined) {
+			// Tooltip detail: cache hit ratio (one decimal) instead of the live
+			// processed counter, so the value is stable and matches the final
+			// usage report.
+			const cachePct = total > 0 ? ((cache / total) * 100).toFixed(1) : "0.0";
 			state = {
 				phase: "pp",
 				line: formatPpLine(processed, cache, total, timeMs),
-				detail: `prompt ${processed}/${total} · cache ${cache}`,
+				detail: `prompt ${cache}/${total} · cache ${cachePct}%`,
 			};
 		}
 	}
@@ -212,14 +216,19 @@ export function parseLlamaSpeed(parsed: Record<string, unknown>): LlamaSpeedStat
 
 /**
  * Renders live llama.cpp PP/TG state into an existing status bar slot while at
- * least one request is in flight. The slot's token usage display is refreshed
- * by the provider after the request ends (no snapshot/restore here).
+ * least one request is in flight. The status bar LINE updates in real time
+ * (throttled); the TOOLTIP is a one-shot snapshot of the first PP cache
+ * detail, so the hover text stays static and does not flicker on every
+ * chunk. The slot's token usage display is refreshed by the provider after
+ * the request ends (no snapshot/restore here).
  */
 export class LlamaSpeedDisplay implements vscode.Disposable {
 	private static readonly THROTTLE_MS = 250;
 
 	private _active = 0;
 	private _pending: LlamaSpeedState | undefined;
+	/** First PP cache detail of the current request; written to the tooltip exactly once. */
+	private _tooltipDetail: string | undefined;
 	private _timer: NodeJS.Timeout | undefined;
 	private _lastWrite = 0;
 
@@ -228,12 +237,20 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	/** Mark the start of a request. */
 	begin(): void {
 		this._active++;
+		// Fresh tooltip snapshot per request (the provider restores the usage
+		// tooltip after the request ends, so nothing is cleared here).
+		this._tooltipDetail = undefined;
 	}
 
 	/** Report a new speed state; UI writes are throttled (trailing edge). */
 	update(state: LlamaSpeedState): void {
 		if (this._active === 0) {
 			return;
+		}
+		// Capture the first PP detail for the tooltip. The TG detail
+		// (`prompt N tok`) is less informative and must never overwrite it.
+		if (state.phase === "pp" && state.detail && this._tooltipDetail === undefined) {
+			this._tooltipDetail = state.detail;
 		}
 		this._pending = state;
 		if (this._timer === undefined) {
@@ -272,7 +289,14 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
 		this.item.backgroundColor = undefined;
 		this.item.text = `${icon} ${state.line}`;
-		this.item.tooltip = state.detail ? `${state.line}\n${state.detail}` : state.line;
+		// Tooltip: write the PP cache snapshot exactly once per request (even
+		// if the first flush already carries a TG state, i.e. PP and TG
+		// arrived within the same throttle window). Subsequent flushes leave
+		// it untouched.
+		if (this._tooltipDetail !== undefined) {
+			this.item.tooltip = this._tooltipDetail;
+			this._tooltipDetail = undefined;
+		}
 		this._lastWrite = Date.now();
 	}
 

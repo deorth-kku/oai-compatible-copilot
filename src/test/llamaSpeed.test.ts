@@ -1,9 +1,11 @@
 import * as assert from "assert";
+import * as vscode from "vscode";
 import {
 	formatDurationMs,
 	formatLlamaUsageReport,
 	formatPpLine,
 	formatTgLine,
+	LlamaSpeedDisplay,
 	parseLlamaSpeed,
 } from "../llamaSpeed";
 import type { TokenUsage } from "../types";
@@ -38,8 +40,21 @@ suite("llamaSpeed", () => {
 		assert.deepStrictEqual(state, {
 			phase: "pp",
 			line: "PP 943.0 t/s 45%",
-			detail: "prompt 300/512 · cache 128",
+			detail: "prompt 128/512 · cache 25.0%",
 		});
+	});
+
+	test("parseLlamaSpeed: cache percentage keeps one decimal", () => {
+		const state = parseLlamaSpeed({
+			prompt_progress: { total: 3, cache: 1, processed: 2, time_ms: 10 },
+		});
+		assert.strictEqual(state?.detail, "prompt 1/3 · cache 33.3%");
+
+		// Degenerate total: no division by zero.
+		const degenerate = parseLlamaSpeed({
+			prompt_progress: { total: 0, cache: 0, processed: 0, time_ms: 1 },
+		});
+		assert.strictEqual(degenerate?.detail, "prompt 0/0 · cache 0.0%");
 	});
 
 	test("parseLlamaSpeed: timings chunk switches to TG", () => {
@@ -90,6 +105,96 @@ suite("llamaSpeed", () => {
 			}),
 			undefined
 		);
+	});
+});
+
+suite("LlamaSpeedDisplay", () => {
+	function createItemStub(): vscode.StatusBarItem {
+		return {
+			text: "",
+			tooltip: "",
+			backgroundColor: undefined,
+			show() {},
+		} as unknown as vscode.StatusBarItem;
+	}
+
+	function sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	// Long enough for the 250 ms trailing-edge throttle to fire.
+	const FLUSH_WAIT_MS = 400;
+
+	test("tooltip is written once from the first PP detail, then frozen", async () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+		display.begin();
+
+		display.update({ phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.text, "$(loading~spin) PP 943.0 t/s 45%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+
+		// Later PP chunk: tooltip must not be rewritten.
+		display.update({ phase: "pp", line: "PP 1000.0 t/s 60%", detail: "prompt 128/512 · cache 25.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.text, "$(loading~spin) PP 1000.0 t/s 60%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+
+		// TG phase: status bar line updates, tooltip stays frozen.
+		display.update({ phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.text, "$(zap) TG 32.3 t/s 42 tok");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+
+		display.end();
+	});
+
+	test("PP and TG in the same throttle window still keep the PP tooltip", async () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+		display.begin();
+
+		display.update({ phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
+		display.update({ phase: "tg", line: "TG — t/s 1 tok", detail: "prompt 512 tok" });
+		await sleep(FLUSH_WAIT_MS);
+
+		assert.strictEqual(item.text, "$(zap) TG — t/s 1 tok");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		display.end();
+	});
+
+	test("TG without any PP leaves the existing tooltip untouched", async () => {
+		const item = createItemStub();
+		item.tooltip = "previous usage tooltip";
+		const display = new LlamaSpeedDisplay(item);
+		display.begin();
+
+		display.update({ phase: "tg", line: "TG — t/s 1 tok", detail: "prompt 512 tok" });
+		await sleep(FLUSH_WAIT_MS);
+
+		assert.strictEqual(item.text, "$(zap) TG — t/s 1 tok");
+		assert.strictEqual(item.tooltip, "previous usage tooltip");
+		display.end();
+	});
+
+	test("begin() resets the snapshot for the next request", async () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+
+		// First request: PP snapshot is written.
+		display.begin();
+		display.update({ phase: "pp", line: "PP 100%", detail: "prompt 128/128 · cache 100.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%");
+		display.end();
+
+		// Second request never sees PP: tooltip must keep its old value.
+		display.begin();
+		display.update({ phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 10 tok" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%");
+		display.end();
 	});
 });
 
