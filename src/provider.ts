@@ -572,6 +572,17 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						logger.debug("reasoningControl.wiring.completionId", { completionId });
 						pendingCompletionId = completionId;
 					};
+					// Reasoning is over as soon as the answer begins (first real
+					// content or tool call): clear the registration now instead of
+					// waiting for the stream to end, so the status-bar picker only
+					// lists streams that are still reasoning.
+					openaiApi.onReasoningEnd = () => {
+						const id = openaiApi.getCompletionId();
+						if (id) {
+							logger.debug("reasoningControl.wiring.reasoningEnded", { completionId: id });
+							this.reasoningControl.deactivate(id);
+						}
+					};
 				}
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text

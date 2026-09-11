@@ -52,8 +52,18 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	onCompletionId?: (completionId: string) => void;
 
+	/**
+	 * Optional callback fired exactly once when the answer has begun — i.e. the
+	 * first delta carrying `content` (non-think text) or `tool_calls`. By then
+	 * reasoning is over, so the provider uses it to clear the reasoning-control
+	 * registration early instead of waiting for the stream to finish.
+	 */	onReasoningEnd?: () => void;
+
 	/** The completion id captured from the first streamed response object. */
 	private _completionId: string | undefined;
+
+	/** Guards `onReasoningEnd` so it fires exactly once per stream. */
+	private _reasoningEndFired = false;
 
 	/** The completion id captured from the stream (undefined until received). */
 	getCompletionId(): string | undefined {
@@ -387,6 +397,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		this.beginReasoningCapture();
 		this._completionId = undefined;
 		this._llamaIdSlot = undefined;
+		this._reasoningEndFired = false;
 		logger.debug("openai.stream.start", { modelId });
 
 		const reader = responseBody.getReader();
@@ -499,6 +510,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		progress: Progress<LanguageModelResponsePart2>
 	): Promise<boolean> {
 		let emitted = false;
+		// True once the answer has begun (first real text or tool call) — used
+		// to fire `onReasoningEnd` exactly once, since reasoning is over by then.
+		let answerStarted = false;
 		const choice = (delta.choices as Record<string, unknown>[] | undefined)?.[0];
 		if (!choice) {
 			return false;
@@ -580,6 +594,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 				if (res.emittedAny) {
 					this._hasEmittedAssistantText = true;
 					emitted = true;
+					// Real (non-think) text: the answer has begun.
+					answerStarted = true;
 				}
 			}
 		}
@@ -587,6 +603,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		if (deltaObj?.tool_calls) {
 			// If there's an active thinking sequence, end it first
 			this.reportEndThinking(progress);
+			// Tool calls can only start after reasoning is over.
+			answerStarted = true;
 
 			const toolCalls = deltaObj.tool_calls as Array<Record<string, unknown>>;
 
@@ -625,6 +643,22 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		if (finish === "tool_calls" || finish === "stop") {
 			// On both 'tool_calls' and 'stop', emit any buffered calls and throw on invalid JSON
 			await this.flushToolCallBuffers(progress, /*throwOnInvalid*/ true);
+		}
+
+		// Reasoning is over once the answer begins: notify the provider (once) so
+		// it can clear the reasoning-control registration without waiting for the
+		// stream to finish.
+		if (answerStarted && !this._reasoningEndFired) {
+			this._reasoningEndFired = true;
+			try {
+				this.onReasoningEnd?.();
+			} catch (e) {
+				console.error("[OpenAI Provider] Reasoning end callback failed:", e);
+				logger.error("openai.stream.reasoningEndCallback.error", {
+					modelId: this._modelId,
+					error: e instanceof Error ? e.message : String(e),
+				});
+			}
 		}
 		return emitted;
 	}

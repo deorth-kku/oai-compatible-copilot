@@ -101,4 +101,74 @@ suite("openai streaming usage pipeline (real log payload)", () => {
 
 		assert.strictEqual(api.getCompletionId(), "chatcmpl-6vKoe2eQMBCZcxpuavsi4oE8dSRY1oNQ");
 	});
+
+	test("fires onReasoningEnd exactly once when the answer begins", async () => {
+		const api = new OpenaiApi("test-model");
+		const { progress } = createProgressStub();
+		const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+
+		let fired = 0;
+		api.onReasoningEnd = () => {
+			fired++;
+		};
+
+		const chunks = [
+			{ id: "chatcmpl-1", choices: [{ delta: { reasoning_content: "hmm" }, finish_reason: null }] },
+			{ choices: [{ delta: { reasoning_content: "more" }, finish_reason: null }] },
+			{ choices: [{ delta: { content: "answer" }, finish_reason: null }] },
+			{ choices: [{ delta: { content: " text" }, finish_reason: "stop" }] },
+		];
+		const sse = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("");
+		await api.processStreamingResponse(sseStream([new TextEncoder().encode(sse)]), progress, token);
+
+		assert.strictEqual(fired, 1, "onReasoningEnd fires exactly once, at the first answer chunk");
+	});
+
+	test("does not fire onReasoningEnd for thinking-only streams", async () => {
+		const api = new OpenaiApi("test-model");
+		const { progress } = createProgressStub();
+		const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+
+		let fired = 0;
+		api.onReasoningEnd = () => {
+			fired++;
+		};
+
+		const chunks = [
+			{ id: "chatcmpl-1", choices: [{ delta: { reasoning_content: "hmm" }, finish_reason: null }] },
+			{ choices: [{ delta: {}, finish_reason: "stop" }] },
+		];
+		const sse = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("");
+		await api.processStreamingResponse(sseStream([new TextEncoder().encode(sse)]), progress, token);
+
+		assert.strictEqual(fired, 0);
+	});
+
+	test("fires onReasoningEnd when tool calls begin", async () => {
+		const api = new OpenaiApi("test-model");
+		const { progress } = createProgressStub();
+		const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+
+		let fired = 0;
+		api.onReasoningEnd = () => {
+			fired++;
+		};
+
+		const chunks = [
+			{ id: "chatcmpl-1", choices: [{ delta: { reasoning_content: "hmm" }, finish_reason: null }] },
+			{
+				choices: [
+					{
+						delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "f", arguments: "{}" } }] },
+						finish_reason: null,
+					},
+				],
+			},
+			{ choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+		];
+		const sse = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("");
+		await api.processStreamingResponse(sseStream([new TextEncoder().encode(sse)]), progress, token);
+
+		assert.strictEqual(fired, 1);
+	});
 });
