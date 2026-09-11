@@ -57,7 +57,10 @@
 					</div>
 					<div class="field">
 						<label for="intervalMs">Retry Interval (ms)</label>
-						<div class="field-description">Starting interval between retry attempts in milliseconds. Retries use 2^n exponential backoff from this base (e.g. 1000, 2000, 4000 ms), capped at 60000 ms.</div>
+						<div class="field-description">
+							Starting interval between retry attempts in milliseconds. Retries use 2^n exponential backoff from this
+							base (e.g. 1000, 2000, 4000 ms), capped at 60000 ms.
+						</div>
 						<input id="intervalMs" type="number" min="1" placeholder="1000" />
 					</div>
 					<div class="field">
@@ -288,14 +291,19 @@
 										Model family (e.g., 'gpt-4', 'claude-3', 'gemini'). Enables model-specific optimizations and
 										behaviors. Auto-filled from model id when left empty.
 									</div>
-									<input id="modelFamily" type="text" class="model-input" placeholder="e.g., gpt-4, claude-3 (auto-filled from id)" />
+									<input
+										id="modelFamily"
+										type="text"
+										class="model-input"
+										placeholder="e.g., gpt-4, claude-3 (auto-filled from id)"
+									/>
 								</div>
 								<div class="field">
 									<label for="modelStatusIcon">Status Icon</label>
 									<div class="field-description">
 										Codicon id shown next to the model in the Copilot picker (e.g., 'openai', 'claude',
-										'google-gemini'). Auto-filled from model id when empty. Pick from the suggestions or type
-										any valid codicon id; leave empty to use the default icon.
+										'google-gemini'). Auto-filled from model id when empty. Pick from the suggestions or type any valid
+										codicon id; leave empty to use the default icon.
 									</div>
 									<input
 										id="modelStatusIcon"
@@ -322,18 +330,20 @@
 									<label for="modelThinkingBudget">Thinking Budget</label>
 									<div class="field-description">Maximum number of tokens for chain-of-thought output.</div>
 									<input id="modelThinkingBudget" type="number" class="model-input" min="128" />
-								</div>									<div class="field">
-										<label for="modelStripReminderInstructions">Strip Reminder Instructions</label>
-										<div class="field-description">
-											Remove the first &lt;reminderInstructions&gt; block that Copilot injects into every user turn
-											before sending.
-										</div>
-										<select id="modelStripReminderInstructions" class="model-input">
-											<option value="">Default (False)</option>
-											<option value="true">True</option>
-											<option value="false">False</option>
-										</select>
-									</div>							</div>
+								</div>
+								<div class="field">
+									<label for="modelStripReminderInstructions">Strip Reminder Instructions</label>
+									<div class="field-description">
+										Remove the first &lt;reminderInstructions&gt; block that Copilot injects into every user turn before
+										sending.
+									</div>
+									<select id="modelStripReminderInstructions" class="model-input">
+										<option value="">Default (False)</option>
+										<option value="true">True</option>
+										<option value="false">False</option>
+									</select>
+								</div>
+							</div>
 							<div class="row">
 								<div class="field">
 									<label for="modelTopK">Top K</label>
@@ -438,9 +448,7 @@
 									</div>
 									<div class="field" id="modelReasoningExcludeField">
 										<label for="modelReasoningExclude">Reasoning Exclude</label>
-										<div class="field-description">
-											Include "reasoning.exclude" in request body (OpenRouter only).
-										</div>
+										<div class="field-description">Include "reasoning.exclude" in request body (OpenRouter only).</div>
 										<select id="modelReasoningExclude" class="model-input">
 											<option value=""></option>
 											<option value="true">True</option>
@@ -450,9 +458,9 @@
 									<div class="field" id="modelDiskKvCacheField">
 										<label for="modelDiskKvCache">Disk KV Cache (experimental)</label>
 										<div class="field-description">
-											Reuse the llama.cpp on-disk prompt cache across new sessions via the /slots endpoint
-											(restore/save of {cache_id}.bin). Requires a llama.cpp server with /slots enabled
-											and --slot-save-path configured. Experimental.
+											Reuse the llama.cpp on-disk prompt cache across new sessions via the /slots endpoint (restore/save
+											of {cache_id}.bin). Requires a llama.cpp server with /slots enabled and --slot-save-path
+											configured. Experimental.
 										</div>
 										<select id="modelDiskKvCache" class="model-input">
 											<option value="">Default (False)</option>
@@ -463,9 +471,9 @@
 									<div class="field" id="modelLlamaSlotTimeoutField">
 										<label for="modelLlamaSlotTimeout">Slot Request Timeout (ms)</label>
 										<div class="field-description">
-											Timeout for each llama.cpp /slots request of the disk KV cache feature
-											(GET /slots, restore, save). The slot lookup and restore also abort as soon as
-											the chat request is cancelled. Default: 300000 (5 minutes).
+											Timeout for each llama.cpp /slots request of the disk KV cache feature (GET /slots, restore,
+											save). The slot lookup and restore also abort as soon as the chat request is cancelled. Default:
+											300000 (5 minutes).
 										</div>
 										<input
 											id="modelLlamaSlotTimeout"
@@ -481,10 +489,23 @@
 										<div class="field-description">
 											Split the first system message at the first &lt;/memoryInstructions&gt; marker so the stable
 											prefix stays cacheable by the llama.cpp prompt cache. The variable tail (skills, agents,
-											attachments, template variables, per-session log) moves into a following user message
-											(a second system message would be merged back by llama.cpp's jinja template).
+											attachments, template variables, per-session log) moves into a following user message (a second
+											system message would be merged back by llama.cpp's jinja template).
 										</div>
 										<select id="modelSplitSystemPrompt" class="model-input">
+											<option value="">Default (False)</option>
+											<option value="true">True</option>
+											<option value="false">False</option>
+										</select>
+									</div>
+									<div class="field" id="modelReasoningControlField">
+										<label for="modelReasoningControl">Reasoning Control</label>
+										<div class="field-description">
+											Enable the Copilot chat input button that ends the current llama.cpp reasoning block through the
+											/chat/completions/control endpoint. Requires an OpenAI-compatible llama.cpp server with
+											reasoning_control support.
+										</div>
+										<select id="modelReasoningControl" class="model-input">
 											<option value="">Default (False)</option>
 											<option value="true">True</option>
 											<option value="false">False</option>

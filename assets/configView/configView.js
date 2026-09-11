@@ -65,6 +65,8 @@ const modelLlamaSlotTimeoutInput = document.getElementById("modelLlamaSlotTimeou
 const modelLlamaSlotTimeoutField = document.getElementById("modelLlamaSlotTimeoutField");
 const modelSplitSystemPromptInput = document.getElementById("modelSplitSystemPrompt");
 const modelSplitSystemPromptField = document.getElementById("modelSplitSystemPromptField");
+const modelReasoningControlInput = document.getElementById("modelReasoningControl");
+const modelReasoningControlField = document.getElementById("modelReasoningControlField");
 const supportedEffortsGroup = document.getElementById("modelSupportedEfforts");
 const modelThinkingTypeInput = document.getElementById("modelThinkingType");
 const modelHeadersInput = document.getElementById("modelHeaders");
@@ -571,6 +573,7 @@ function resetModelForm() {
 	modelDiskKvCacheInput.value = "";
 	modelLlamaSlotTimeoutInput.value = "";
 	modelSplitSystemPromptInput.value = "";
+	modelReasoningControlInput.value = "";
 	uncheckSupportedEfforts();
 	syncReasoningEffortOptions();
 	updateOptimizationVisibility();
@@ -628,12 +631,9 @@ function collectModelFormData() {
 			? modelStripReminderInstructionsInput.value === "true"
 			: undefined,
 		disk_kv_cache: modelDiskKvCacheInput.value ? modelDiskKvCacheInput.value === "true" : undefined,
-		llama_slot_timeout: modelLlamaSlotTimeoutInput.value
-			? parseInt(modelLlamaSlotTimeoutInput.value)
-			: undefined,
-		split_system_prompt: modelSplitSystemPromptInput.value
-			? modelSplitSystemPromptInput.value === "true"
-			: undefined,
+		llama_slot_timeout: modelLlamaSlotTimeoutInput.value ? parseInt(modelLlamaSlotTimeoutInput.value) : undefined,
+		split_system_prompt: modelSplitSystemPromptInput.value ? modelSplitSystemPromptInput.value === "true" : undefined,
+		reasoning_control: modelReasoningControlInput.value ? modelReasoningControlInput.value === "true" : undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
 			? parseInt(modelMaxCompletionTokensInput.value)
 			: undefined,
@@ -719,8 +719,8 @@ function syncReasoningEffortOptions() {
 }
 
 // Show/hide the backend-specific fields based on the selected optimization
-// type: "Reasoning Exclude" is OpenRouter-only, "Disk KV Cache" and
-// "Slot Request Timeout" are llama.cpp-only.
+// type: "Reasoning Exclude" is OpenRouter-only; disk cache, slot timeout,
+// system prompt splitting, and reasoning control are llama.cpp-only.
 function updateOptimizationVisibility() {
 	const isOpenRouter = modelOptimizationInput.value === "openrouter";
 	modelReasoningExcludeField.style.display = isOpenRouter ? "" : "none";
@@ -728,6 +728,7 @@ function updateOptimizationVisibility() {
 	modelDiskKvCacheField.style.display = isLlamaCpp ? "" : "none";
 	modelLlamaSlotTimeoutField.style.display = isLlamaCpp ? "" : "none";
 	modelSplitSystemPromptField.style.display = isLlamaCpp ? "" : "none";
+	modelReasoningControlField.style.display = isLlamaCpp ? "" : "none";
 }
 
 // Build thinking configuration object from form fields
@@ -1228,6 +1229,7 @@ function populateModelForm(model) {
 	modelDiskKvCacheInput.value = model.disk_kv_cache !== undefined ? String(model.disk_kv_cache) : "";
 	modelLlamaSlotTimeoutInput.value = model.llama_slot_timeout || "";
 	modelSplitSystemPromptInput.value = model.split_system_prompt !== undefined ? String(model.split_system_prompt) : "";
+	modelReasoningControlInput.value = model.reasoning_control !== undefined ? String(model.reasoning_control) : "";
 	setSupportedEfforts(model.supported_efforts);
 	syncReasoningEffortOptions();
 	// Populate reasoning configuration (only `exclude` is actively used)

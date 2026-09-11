@@ -9,6 +9,7 @@ import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMess
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { CommonApi } from "./commonApi";
 import { LlamaSpeedDisplay } from "./llamaSpeed";
+import { ReasoningControlManager } from "./reasoningControl";
 
 export function activate(context: vscode.ExtensionContext) {
 	// Initialize logger
@@ -19,12 +20,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
 	const llamaSpeedDisplay = new LlamaSpeedDisplay(tokenCountStatusBarItem);
-	context.subscriptions.push(llamaSpeedDisplay);
+	const reasoningControl = new ReasoningControlManager();
+	context.subscriptions.push(llamaSpeedDisplay, reasoningControl);
 	const provider = new HuggingFaceChatModelProvider(
 		context.secrets,
 		tokenCountStatusBarItem,
 		llamaSpeedDisplay,
-		context.globalState
+		context.globalState,
+		reasoningControl
 	);
 	// Hydrate the persisted reasoning cache into memory before any request can run.
 	CommonApi.hydrate();
@@ -115,6 +118,19 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand("oaicopilot.openConfig", async () => {
 			ConfigViewPanel.openPanel(context.extensionUri, context.secrets);
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("oaicopilot.endReasoning", async () => {
+			logger.debug("reasoningControl.command.invoked", { source: "chat-input-status-button" });
+			const result = await reasoningControl.endLatestReasoning();
+			logger.debug("reasoningControl.command.result", { success: result.success, message: result.message });
+			if (result.success) {
+				vscode.window.showInformationMessage("Reasoning ended.");
+			} else {
+				vscode.window.showWarningMessage(result.message ?? "Unable to end reasoning.");
+			}
 		})
 	);
 

@@ -204,6 +204,16 @@ export interface HFModelItem {
 	split_system_prompt?: boolean;
 
 	/**
+	 * Enable llama.cpp's real-time reasoning control endpoint for OpenAI-compatible
+	 * chat completions. When enabled, the extension exposes an in-chat control
+	 * button after receiving the streamed completion id. Only effective with
+	 * `apiMode: "openai"` and `optimization: "llama.cpp"`.
+	 *
+	 * Default is false.
+	 */
+	reasoning_control?: boolean;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".

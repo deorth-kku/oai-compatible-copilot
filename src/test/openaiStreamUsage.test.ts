@@ -70,4 +70,35 @@ suite("openai streaming usage pipeline (real log payload)", () => {
 		assert.ok(decoded.timings, "timings survived serialization into the data part");
 		assert.strictEqual(decoded.timings.prompt_ms, 275.416);
 	});
+
+	test("captures the completion id and fires onCompletionId exactly once", async () => {
+		const api = new OpenaiApi("test-model");
+		const { progress } = createProgressStub();
+		const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+
+		const ids: string[] = [];
+		api.onCompletionId = (id) => {
+			ids.push(id);
+		};
+
+		const full = new TextEncoder().encode(`data: ${JSON.stringify(finalChunk)}\n\n`);
+		await api.processStreamingResponse(sseStream([full]), progress, token);
+
+		assert.strictEqual(api.getCompletionId(), "chatcmpl-6vKoe2eQMBCZcxpuavsi4oE8dSRY1oNQ");
+		assert.deepStrictEqual(ids, ["chatcmpl-6vKoe2eQMBCZcxpuavsi4oE8dSRY1oNQ"]);
+	});
+
+	test("swallows errors thrown by the completion id callback", async () => {
+		const api = new OpenaiApi("test-model");
+		const { progress } = createProgressStub();
+		const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+		api.onCompletionId = () => {
+			throw new Error("boom");
+		};
+
+		const full = new TextEncoder().encode(`data: ${JSON.stringify(finalChunk)}\n\n`);
+		await api.processStreamingResponse(sseStream([full]), progress, token);
+
+		assert.strictEqual(api.getCompletionId(), "chatcmpl-6vKoe2eQMBCZcxpuavsi4oE8dSRY1oNQ");
+	});
 });

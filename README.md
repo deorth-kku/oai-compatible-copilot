@@ -454,6 +454,7 @@ All parameters support individual configuration for different models, providing 
 - `headers`: Custom HTTP headers to be sent with every request to this model's provider (e.g., `{"X-API-Version": "v1", "X-Custom-Header": "value"}`). These headers will be merged with the default headers (Authorization, Content-Type, User-Agent)
 - `extra`: Extra request body parameters.
 - `include_reasoning_in_request`: Whether to include reasoning_content in assistant messages sent to the API. Supports deepseek-v3.2 and similar models.
+- `reasoning_control`: Enable real-time reasoning control for llama.cpp OpenAI-compatible requests. When enabled (requires `apiMode: "openai"` and `optimization: "llama.cpp"`), an "End Reasoning" button is shown in the Copilot chat input status area while a completion is active; clicking it calls the server's `POST /chat/completions/control` endpoint (`action: "reasoning_end"`) to force-end the current reasoning block. Defaults to false.
 - `apiMode`: API mode: 'openai' (Default) for API (/chat/completions), 'openai-responses' for API (/responses), 'ollama' for API (/api/chat), 'anthropic' for API (/v1/messages), 'gemini' for API (/v1beta/models/{model}:streamGenerateContent?alt=sse).
 - `delay`: Model-specific delay in milliseconds between consecutive requests. If not specified, falls back to global `oaicopilot.delay` configuration.
 - `useForCommitGeneration`: Whether to be used for Git commit message generation. Not supports gemini apiMode.

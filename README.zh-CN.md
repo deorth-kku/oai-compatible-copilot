@@ -453,6 +453,7 @@ VS Code Copilot 针对特定模型优化了系统提示词。[详细介绍](http
 - `headers`：发送到此模型供应商的自定义 HTTP 请求头（如 `{"X-API-Version": "v1", "X-Custom-Header": "value"}`）。将与默认请求头（Authorization、Content-Type、User-Agent）合并
 - `extra`：额外请求体参数。
 - `include_reasoning_in_request`：是否在发送给 API 的 assistant 消息中包含 reasoning_content。支持 deepseek-v3.2 及类似模型。
+- `reasoning_control`：为 llama.cpp OpenAI 兼容请求启用实时推理控制。启用后（需要 `apiMode: "openai"` 且 `optimization: "llama.cpp"`），在补全进行中时 Copilot 聊天输入状态区会显示"结束推理"按钮；点击后调用服务器的 `POST /chat/completions/control` 端点（`action: "reasoning_end"`）强制结束当前推理块。默认 false。
 - `apiMode`：API 模式：'openai'（默认）对应 API（/chat/completions），'openai-responses' 对应 API（/responses），'ollama' 对应 API（/api/chat），'anthropic' 对应 API（/v1/messages），'gemini' 对应 API（/v1beta/models/{model}:streamGenerateContent?alt=sse）。
 - `delay`：连续请求之间的模型专属延迟（毫秒）。未指定时回退到全局 `oaicopilot.delay` 配置。
 - `useForCommitGeneration`：是否用于 Git 提交信息生成。不支持 gemini apiMode。

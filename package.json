@@ -82,9 +82,22 @@
 				"title": "Generate Commit Message with OAICopilot - Stop",
 				"category": "OAICopilot",
 				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "oaicopilot.endReasoning",
+				"title": "End Reasoning",
+				"category": "OAICopilot",
+				"icon": "$(debug-stop)"
 			}
 		],
 		"menus": {
+			"chat/input/status": [
+				{
+					"command": "oaicopilot.endReasoning",
+					"group": "navigation",
+					"when": "oaicopilot.reasoningControlAvailable && !oaicopilot.reasoningControlBusy"
+				}
+			],
 			"scm/title": [
 				{
 					"command": "oaicopilot.generateGitCommitMessage",
@@ -105,6 +118,10 @@
 				{
 					"command": "oaicopilot.abortGitCommitMessage",
 					"when": "config.git.enabled && oaicopilot.isGeneratingCommit"
+				},
+				{
+					"command": "oaicopilot.endReasoning",
+					"when": "true"
 				}
 			]
 		},
@@ -366,6 +383,11 @@
 								"type": "boolean",
 								"default": false,
 								"description": "Whether to strip the first <reminderInstructions> block that Copilot injects into every user turn before sending the request to the API. Default is false."
+							},
+							"reasoning_control": {
+								"type": "boolean",
+								"default": false,
+								"description": "Enable real-time reasoning control for llama.cpp OpenAI-compatible requests. When enabled, an End Reasoning button is shown in the Copilot chat input status area while a completion is active. Requires apiMode='openai' and optimization='llama.cpp'."
 							}
 						},
 						"required": [

@@ -8,7 +8,11 @@ import {
 } from "vscode";
 
 import type { HFModelItem, TokenUsage, LlamaTimings, ModelConversionConfig } from "../types";
-import { getConfiguredReasoningEffort, getModelDefaultReasoningEffort, isReasoningEffortPickerEnabled } from "../modelConfiguration";
+import {
+	getConfiguredReasoningEffort,
+	getModelDefaultReasoningEffort,
+	isReasoningEffortPickerEnabled,
+} from "../modelConfiguration";
 
 import type {
 	OpenAIChatMessage,
@@ -38,6 +42,20 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 * streamed chunks. Set by the provider; undefined when not wired up.
 	 */
 	onSpeedUpdate?: (state: LlamaSpeedState) => void;
+
+	/**
+	 * Optional callback receiving the first streamed completion id. Set by the
+	 * provider to enable real-time control of an in-flight completion.
+	 */
+	onCompletionId?: (completionId: string) => void;
+
+	/** The completion id captured from the first streamed response object. */
+	private _completionId: string | undefined;
+
+	/** The completion id captured from the stream (undefined until received). */
+	getCompletionId(): string | undefined {
+		return this._completionId;
+	}
 
 	/**
 	 * The slot id the llama.cpp server actually used for this request, captured
@@ -324,6 +342,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		if (um?.optimization === "llama.cpp") {
 			rb.return_progress = true;
 			rb.timings_per_token = true;
+			if (um.reasoning_control === true) {
+				rb.reasoning_control = true;
+			}
 			// llama.cpp exposes the thinking budget as the top-level
 			// `reasoning_budget_tokens` field (reuses the basic `thinking_budget` setting).
 			if (um.thinking_budget !== undefined) {
@@ -361,6 +382,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	): Promise<void> {
 		const modelId = this._modelId;
 		this.beginReasoningCapture();
+		this._completionId = undefined;
 		this._llamaIdSlot = undefined;
 		logger.debug("openai.stream.start", { modelId });
 
@@ -397,6 +419,18 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
 					try {
 						const parsed = JSON.parse(data);
+						if (!this._completionId && typeof parsed.id === "string" && parsed.id.trim().length > 0) {
+							this._completionId = parsed.id;
+							try {
+								this.onCompletionId?.(parsed.id);
+							} catch (e) {
+								console.error("[OpenAI Provider] Completion id callback failed:", e);
+								logger.error("openai.stream.completionIdCallback.error", {
+									modelId,
+									error: e instanceof Error ? e.message : String(e),
+								});
+							}
+						}
 						// Capture usage from the final chunk (stream_options.include_usage)
 						if (parsed.usage && typeof parsed.usage === "object") {
 							const usage = parsed.usage as TokenUsage;
@@ -640,7 +674,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) {break;}
+				if (done) {
+					break;
+				}
 
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
@@ -651,14 +687,18 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 						continue;
 					}
 					const data = line.slice(5).trim();
-					if (data === "[DONE]") {continue;}
+					if (data === "[DONE]") {
+						continue;
+					}
 
 					try {
 						const parsed = JSON.parse(data);
 
 						// OpenAI-compatible streaming response
 						const choice = (parsed.choices as Record<string, unknown>[] | undefined)?.[0];
-						if (!choice) {continue;}
+						if (!choice) {
+							continue;
+						}
 
 						const deltaObj = choice.delta as Record<string, unknown> | undefined;
 						if (deltaObj?.content) {
@@ -666,7 +706,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 							yield { type: "text", text: content };
 						}
 						// Handle finish reason
-						if (choice.finish_reason) {break;}
+						if (choice.finish_reason) {
+							break;
+						}
 					} catch (e) {
 						console.error("[OpenAI Provider] Failed to parse SSE chunk:", e, "data:", data);
 					}

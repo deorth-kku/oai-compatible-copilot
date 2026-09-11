@@ -74,10 +74,7 @@ suite("modelConfiguration", () => {
 			true
 		);
 		// Only non-standard values -> disabled
-		assert.strictEqual(
-			isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", supported_efforts: ["bogus"] }),
-			false
-		);
+		assert.strictEqual(isReasoningEffortPickerEnabled({ id: "m", owned_by: "p", supported_efforts: ["bogus"] }), false);
 	});
 
 	test("reads the selected reasoning effort from VS Code model configuration", () => {
@@ -188,7 +185,13 @@ suite("modelConfiguration", () => {
 		const anthropicBody = new AnthropicApi("claude").prepareRequestBody(
 			{ model: "claude", messages: [], max_tokens: 1024, stream: true },
 			// fixture carries reasoning_effort, which would take priority over manual thinking
-			{ ...deepSeekModel, reasoning_effort: undefined, apiMode: "anthropic", enable_thinking: true, thinking_budget: 16000 },
+			{
+				...deepSeekModel,
+				reasoning_effort: undefined,
+				apiMode: "anthropic",
+				enable_thinking: true,
+				thinking_budget: 16000,
+			},
 			undefined
 		) as unknown as Record<string, unknown>;
 
@@ -220,5 +223,45 @@ suite("modelConfiguration", () => {
 		assert.strictEqual(ollamaBody.think, undefined);
 		assert.strictEqual(geminiBody.reasoning_effort, undefined);
 		assert.strictEqual(geminiBody.thinkingConfig, undefined);
+	});
+});
+
+suite("llama.cpp reasoning_control request body", () => {
+	const llamaModel: HFModelItem = {
+		id: "llama-model",
+		displayName: "Llama",
+		owned_by: "llama",
+		baseUrl: "http://localhost:8080/v1",
+		apiMode: "openai",
+		optimization: "llama.cpp",
+	};
+
+	test("sets reasoning_control only when the option is enabled on a llama.cpp model", () => {
+		const api = new OpenaiApi(llamaModel.id);
+
+		const enabled = api.prepareRequestBody(
+			{ model: llamaModel.id, messages: [], stream: true },
+			{ ...llamaModel, reasoning_control: true }
+		);
+		assert.strictEqual(enabled.reasoning_control, true);
+		assert.strictEqual(enabled.return_progress, true);
+
+		const disabled = api.prepareRequestBody(
+			{ model: llamaModel.id, messages: [], stream: true },
+			{ ...llamaModel, reasoning_control: false }
+		);
+		assert.strictEqual(disabled.reasoning_control, undefined);
+
+		const unset = api.prepareRequestBody({ model: llamaModel.id, messages: [], stream: true }, llamaModel);
+		assert.strictEqual(unset.reasoning_control, undefined);
+	});
+
+	test("never sets reasoning_control for non-llama.cpp optimizations", () => {
+		const api = new OpenaiApi(llamaModel.id);
+		const body = api.prepareRequestBody(
+			{ model: llamaModel.id, messages: [], stream: true },
+			{ ...llamaModel, optimization: "openrouter", reasoning_control: true }
+		);
+		assert.strictEqual(body.reasoning_control, undefined);
 	});
 });

@@ -29,6 +29,7 @@ import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
 import { LlamaSpeedDisplay } from "./llamaSpeed";
+import { ReasoningControlManager } from "./reasoningControl";
 import {
 	allSlotsEmpty,
 	computeSlotCacheId,
@@ -84,12 +85,14 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	 * @param statusBarItem The status bar item for token display.
 	 * @param llamaSpeed The display for live llama.cpp PP/TG speeds (shares the status bar slot).
 	 * @param globalState Memento used to persist the reasoning replay cache across sessions.
+	 * @param reasoningControl Manager for real-time llama.cpp reasoning control.
 	 */
 	constructor(
 		private readonly secrets: vscode.SecretStorage,
 		private readonly statusBarItem: vscode.StatusBarItem,
 		private readonly llamaSpeed: LlamaSpeedDisplay,
-		private readonly globalState?: vscode.Memento
+		private readonly globalState: vscode.Memento | undefined,
+		private readonly reasoningControl: ReasoningControlManager
 	) {
 		if (globalState) {
 			CommonApi.setMemento(globalState);
@@ -431,7 +434,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
 						const res = await fetch(url, {
-							method: "POST",								signal: abortController.signal,							headers: requestHeaders,
+							method: "POST",
+							signal: abortController.signal,
+							headers: requestHeaders,
 							body: JSON.stringify(body),
 						});
 
@@ -550,6 +555,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
+				if (um?.optimization === "llama.cpp" && um?.reasoning_control === true) {
+					logger.debug("reasoningControl.wiring.enabled", { modelId: parsedModelId.baseId });
+					openaiApi.onCompletionId = (completionId) => {
+						logger.debug("reasoningControl.wiring.completionId", { completionId });
+						this.reasoningControl.activate({
+							id: completionId,
+							model: parsedModelId.baseId,
+							baseUrl: BASE_URL,
+							headers: requestHeaders,
+						});
+					};
+				}
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text
 				// content, so we can't carry a random id). We hash the *original*
@@ -581,14 +598,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// sanitized system prompt and tools; a per-conversation Map in
 				// llamaSlotCache.ts tracks the previous id. See llamaSlotCache.ts
 				// for the matrix and the endpoint details.
-				let slotCache: {
-					rootUrl: string;
-					filename: string;
-					timeoutMs: number;
-					convId: string;
-					cacheId: string;
-					save: boolean;
-				} | undefined;
+				let slotCache:
+					| {
+							rootUrl: string;
+							filename: string;
+							timeoutMs: number;
+							convId: string;
+							cacheId: string;
+							save: boolean;
+					  }
+					| undefined;
 				let pinnedSlot: number | undefined;
 				let slotRestored = false;
 				// Whether a restore was ATTEMPTED (matrix R, or forced by the
@@ -600,8 +619,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					const rootUrl = getServerRootUrl(BASE_URL);
 					const cacheId = computeSlotCacheId({
 						model: parsedModelId.baseId,
-						reasoning:
-							typeof requestBody.reasoning_effort === "string" ? requestBody.reasoning_effort : "",
+						reasoning: typeof requestBody.reasoning_effort === "string" ? requestBody.reasoning_effort : "",
 						system: extractSystemText(openaiMessages),
 						tools: requestBody.tools,
 						toolChoice: requestBody.tool_choice,
@@ -719,12 +737,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					// Experimental llama.cpp disk KV cache post-processing.
 					if (slotCache) {
 						const actualSlot = openaiApi.getLlamaIdSlot();
-						if (
-							slotRestored &&
-							pinnedSlot !== undefined &&
-							actualSlot !== undefined &&
-							actualSlot !== pinnedSlot
-						) {
+						if (slotRestored && pinnedSlot !== undefined && actualSlot !== undefined && actualSlot !== pinnedSlot) {
 							// The server did not honor the pinned id_slot.
 							logger.warn("llamaSlotCache.slotMismatch", {
 								pinned: pinnedSlot,
@@ -775,6 +788,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						recordCacheId(slotCache.convId, slotCache.cacheId);
 					}
 				} finally {
+					const completionId = openaiApi.getCompletionId();
+					if (completionId) {
+						this.reasoningControl.deactivate(completionId);
+					}
 					this.llamaSpeed.end();
 					// Streaming overwrote the token usage display; refresh it now that
 					// the request is done (server usage first, history count fallback).
