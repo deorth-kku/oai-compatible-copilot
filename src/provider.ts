@@ -559,16 +559,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// models; the same flag drives the status bar click behavior
 				// while the stream is live (see LlamaSpeedDisplay).
 				const reasoningControlWired = um?.optimization === "llama.cpp" && um?.reasoning_control === true;
+				// The completion id arrives with the first (PP-phase) chunk, but
+				// the stream must NOT be registered for reasoning control at that
+				// point: reasoning has not started yet during PP, and a
+				// `reasoning_end` request sent in that phase is rejected by the
+				// server. Capture the id here and register the stream on the
+				// first TG speed update (see the onSpeedUpdate wiring below).
+				let pendingCompletionId: string | undefined;
 				if (reasoningControlWired) {
 					logger.debug("reasoningControl.wiring.enabled", { modelId: parsedModelId.baseId });
 					openaiApi.onCompletionId = (completionId) => {
 						logger.debug("reasoningControl.wiring.completionId", { completionId });
-						this.reasoningControl.activate({
-							id: completionId,
-							model: parsedModelId.baseId,
-							baseUrl: BASE_URL,
-							headers: requestHeaders,
-						});
+						pendingCompletionId = completionId;
 					};
 				}
 				// Derive the conversation id from the request history so the reasoning
@@ -734,7 +736,29 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (!response.body) {
 					throw new Error("No response body from OAI Compatible API");
 				}
-				openaiApi.onSpeedUpdate = (state) => this.llamaSpeed.update(state);
+				openaiApi.onSpeedUpdate = (state) => {
+					this.llamaSpeed.update(state);
+					// Register the stream for reasoning control only once TG has
+					// started: the TG state arrives with the first generated
+					// token (timings.predicted_n >= 1), always after the id
+					// chunk, so pendingCompletionId is set by then. During PP
+					// reasoning has not begun and a `reasoning_end` request
+					// would be rejected by the server.
+					if (reasoningControlWired && state.phase === "tg" && pendingCompletionId) {
+						const id = pendingCompletionId;
+						pendingCompletionId = undefined; // register exactly once
+						logger.debug("reasoningControl.wiring.activated", { completionId: id });
+						this.reasoningControl.activate({
+							id,
+							model: parsedModelId.baseId,
+							baseUrl: BASE_URL,
+							headers: requestHeaders,
+							// Registration happens exactly when TG starts, so this
+							// doubles as the TG start timestamp for the picker.
+							tgStartedAt: Date.now(),
+						});
+					}
+				};
 				this.llamaSpeed.begin(reasoningControlWired);
 				try {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);

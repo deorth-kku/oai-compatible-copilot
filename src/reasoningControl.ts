@@ -9,6 +9,8 @@ export interface ReasoningControlTarget {
 	model: string;
 	baseUrl: string;
 	headers: Record<string, string>;
+	/** Epoch milliseconds when TG started (the stream is registered at that point). */
+	tgStartedAt: number;
 }
 
 export interface ReasoningControlResult {
@@ -100,7 +102,7 @@ export class ReasoningControlManager implements vscode.Disposable {
 	private latestId: string | undefined;
 
 	activate(target: ReasoningControlTarget): void {
-		if (!target.id || !target.model || !target.baseUrl) {
+		if (!target.id || !target.model || !target.baseUrl || !Number.isFinite(target.tgStartedAt)) {
 			throw new Error("Invalid reasoning control target.");
 		}
 		this.targets.set(target.id, {
@@ -134,6 +136,47 @@ export class ReasoningControlManager implements vscode.Disposable {
 		return target ? { ...target, headers: { ...target.headers } } : undefined;
 	}
 
+	/**
+	 * All currently registered targets in registration order, excluding any
+	 * that are busy (a `reasoning_end` request is already in flight for them).
+	 */
+	listTargets(): ReasoningControlTarget[] {
+		return Array.from(this.targets.values())
+			.filter((t) => !this.busyIds.has(t.id))
+			.map((t) => ({ ...t, headers: { ...t.headers } }));
+	}
+
+	/**
+	 * Send `reasoning_end` to one specific registered stream. On success the
+	 * stream is deactivated; on failure it stays registered so the request can
+	 * be retried.
+	 */
+	async endReasoning(id: string): Promise<ReasoningControlResult> {
+		const target = this.targets.get(id);
+		logger.debug("reasoningControl.endReasoning", { id, known: target !== undefined });
+		if (!target) {
+			return { success: false, message: "No registered completion matches that id." };
+		}
+		this.busyIds.add(id);
+		try {
+			const result = await sendReasoningControlRequest(target);
+			logger.debug("reasoningControl.endReasoning.result", {
+				id,
+				success: result.success,
+				message: result.message,
+			});
+			if (result.success) {
+				this.deactivate(id);
+			}
+			return result;
+		} finally {
+			this.busyIds.delete(id);
+		}
+	}
+
+	/**
+	 * Send `reasoning_end` to the most recently registered stream.
+	 */
 	async endLatestReasoning(): Promise<ReasoningControlResult> {
 		const target = this.getLatestTarget();
 		logger.debug("reasoningControl.endLatestReasoning", {
@@ -144,22 +187,7 @@ export class ReasoningControlManager implements vscode.Disposable {
 		if (!target) {
 			return { success: false, message: "No active completion is available for reasoning control." };
 		}
-
-		this.busyIds.add(target.id);
-		try {
-			const result = await sendReasoningControlRequest(target);
-			logger.debug("reasoningControl.endLatestReasoning.result", {
-				id: target.id,
-				success: result.success,
-				message: result.message,
-			});
-			if (result.success) {
-				this.deactivate(target.id);
-			}
-			return result;
-		} finally {
-			this.busyIds.delete(target.id);
-		}
+		return this.endReasoning(target.id);
 	}
 
 	clear(): void {

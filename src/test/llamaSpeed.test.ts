@@ -8,7 +8,6 @@ import {
 	formatTgLine,
 	LlamaSpeedDisplay,
 	parseLlamaSpeed,
-	REASONING_NOT_ACTIVE_COMMAND,
 } from "../llamaSpeed";
 import type { TokenUsage } from "../types";
 
@@ -181,18 +180,19 @@ suite("LlamaSpeedDisplay", () => {
 		display.end();
 	});
 
-	test("reasoning control: PP click is the not-active command, TG click ends reasoning", async () => {
+	test("reasoning control: PP and TG clicks both open the end-reasoning command", async () => {
 		const item = createItemStub();
 		const display = new LlamaSpeedDisplay(item);
 		display.begin(true);
 
-		// PP phase: tooltip carries the click hint, click reports not-reasoning.
+		// PP phase: tooltip carries the click hint; the click opens the
+		// end-reasoning picker (only other TG streams would be listed).
 		display.update({ phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To End Reasoning");
-		assert.strictEqual(item.command, REASONING_NOT_ACTIVE_COMMAND);
+		assert.strictEqual(item.command, END_REASONING_COMMAND);
 
-		// TG phase: click becomes the end-reasoning command; tooltip stays frozen.
+		// TG phase: same command; tooltip stays frozen.
 		display.update({ phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.command, END_REASONING_COMMAND);

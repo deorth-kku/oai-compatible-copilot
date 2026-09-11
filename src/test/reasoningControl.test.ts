@@ -6,6 +6,7 @@ const TARGET: ReasoningControlTarget = {
 	model: "my/model",
 	baseUrl: "http://h:8080/v1/",
 	headers: { Authorization: "Bearer key" },
+	tgStartedAt: 1_700_000_000_000,
 };
 
 suite("reasoningControl HTTP client", () => {
@@ -111,6 +112,7 @@ suite("ReasoningControlManager", () => {
 		model: "m",
 		baseUrl: "http://h:8080/v1",
 		headers: { Authorization: "Bearer key" },
+		tgStartedAt: Date.now(),
 	});
 
 	test("activating a target makes it the latest target", () => {
@@ -120,11 +122,12 @@ suite("ReasoningControlManager", () => {
 		manager.dispose();
 	});
 
-	test("rejects targets without an id, model, or base URL", () => {
+	test("rejects targets without an id, model, base URL, or TG start time", () => {
 		const manager = new ReasoningControlManager();
 		assert.throws(() => manager.activate({ ...target("c1"), id: "" }), /Invalid reasoning control target/);
 		assert.throws(() => manager.activate({ ...target("c1"), model: "" }), /Invalid reasoning control target/);
 		assert.throws(() => manager.activate({ ...target("c1"), baseUrl: "" }), /Invalid reasoning control target/);
+		assert.throws(() => manager.activate({ ...target("c1"), tgStartedAt: NaN }), /Invalid reasoning control target/);
 		manager.dispose();
 	});
 

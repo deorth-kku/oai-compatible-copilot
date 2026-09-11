@@ -13,10 +13,14 @@ import type { TokenUsage } from "./types";
 
 export type LlamaSpeedPhase = "pp" | "tg";
 
-/** Status bar command that force-ends the active reasoning block (TG phase). */
+/**
+ * Status bar command while a reasoning-control request is live (both phases):
+ * shows a picker of all registered in-flight streams and force-ends the
+ * reasoning block of the one the user selects. During PP the requesting
+ * stream itself is not registered yet, so the picker only lists other
+ * streams already in TG (or nothing, if there is none).
+ */
 export const END_REASONING_COMMAND = "oaicopilot.endReasoning";
-/** Status bar command while PP is running: reasoning has not started yet. */
-export const REASONING_NOT_ACTIVE_COMMAND = "oaicopilot.reasoningNotActive";
 
 export interface LlamaSpeedState {
 	phase: LlamaSpeedPhase;
@@ -310,14 +314,12 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		this.item.backgroundColor = undefined;
 		this.item.text = `${icon} ${state.line}`;
 		// Click behavior: with reasoning control wired, clicking the status bar
-		// force-ends the reasoning once TG is running; during PP reasoning has
-		// not started yet, so the click reports that. Without it, the default
-		// command (open configuration UI) applies.
-		this.item.command = this._reasoningControl
-			? state.phase === "tg"
-				? END_REASONING_COMMAND
-				: REASONING_NOT_ACTIVE_COMMAND
-			: this.defaultCommand;
+		// opens the end-reasoning picker in both phases: during TG the
+		// requesting stream is listed (it is registered once TG starts), during
+		// PP it is not registered yet, so the picker only offers any OTHER
+		// stream already in TG (or nothing, if there is none). Without it, the
+		// default command (open configuration UI) applies.
+		this.item.command = this._reasoningControl ? END_REASONING_COMMAND : this.defaultCommand;
 		// Tooltip: write the PP cache snapshot exactly once per request (even
 		// if the first flush already carries a TG state, i.e. PP and TG
 		// arrived within the same throttle window). Subsequent flushes leave

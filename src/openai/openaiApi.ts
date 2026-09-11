@@ -44,8 +44,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	onSpeedUpdate?: (state: LlamaSpeedState) => void;
 
 	/**
-	 * Optional callback receiving the first streamed completion id. Set by the
-	 * provider to enable real-time control of an in-flight completion.
+	 * Optional callback receiving the first streamed completion id (PP phase).
+	 * Set by the provider, which captures the id and registers the stream for
+	 * real-time reasoning control only once TG starts (via onSpeedUpdate) —
+	 * during PP reasoning has not begun, so the stream must not be
+	 * controllable yet.
 	 */
 	onCompletionId?: (completionId: string) => void;
 
