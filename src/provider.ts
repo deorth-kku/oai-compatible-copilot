@@ -21,6 +21,7 @@ import { countMessageTokens } from "./provideToken";
 import { updateContextStatusBar, updateContextStatusBarFromUsage } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
+import type { OpenAIChatMessage } from "./openai/openaiTypes";
 import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import { AnthropicRequestBody } from "./anthropic/anthropicTypes";
@@ -43,6 +44,7 @@ import {
 	restoreSlotCache,
 	saveSlotCache,
 } from "./llamaSlotCache";
+import { buildInputTokensBody, buildInputTokensUrl, fetchInputTokens } from "./llamaTokenCount";
 
 /**
  * Default timeout (ms) for llama.cpp `/slots` requests when the model config
@@ -113,7 +115,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	}
 
 	/**
-	 * Returns the number of tokens for a given text using the model specific tokenizer logic
+	 * Returns the number of tokens for a given text using the model specific tokenizer logic.
+	 *
+	 * For OpenAI chat-completions models with `optimization: "llama.cpp"`, the
+	 * llama.cpp server's `POST /chat/completions/input_tokens` endpoint is
+	 * used for a REAL count (chat template + tokenizer of the loaded model).
+	 * The upstream cancellation token is wired straight into the fetch signal,
+	 * so cancelling aborts the in-flight HTTP request. Any non-cancellation
+	 * failure (404 on older llama.cpp builds, network error, malformed
+	 * response, missing key/URL) falls back to the local tiktoken estimator.
+	 *
 	 * @param model The language model to use
 	 * @param text The text to count tokens for
 	 * @param token A cancellation token for the request
@@ -124,7 +135,85 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		text: string | LanguageModelChatRequestMessage,
 		_token: CancellationToken
 	): Promise<number> {
-		return countMessageTokens(text, { includeReasoningInRequest: true });
+		const localCount = () => countMessageTokens(text, { includeReasoningInRequest: true });
+
+		// Resolve the user model config the same way as
+		// provideLanguageModelChatResponse (baseId + configId match, then a
+		// lenient baseId-only match).
+		const config = vscode.workspace.getConfiguration();
+		const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+		const parsedModelId = parseModelId(_model.id);
+		let um: HFModelItem | undefined = userModels.find(
+			(um) =>
+				um.id === parsedModelId.baseId &&
+				((parsedModelId.configId && um.configId === parsedModelId.configId) ||
+					(!parsedModelId.configId && !um.configId))
+		);
+		if (!um) {
+			um = userModels.find((um) => um.id === parsedModelId.baseId);
+		}
+
+		// Server-side counting is only meaningful for the OpenAI chat
+		// completions API against a dedicated llama.cpp backend.
+		const apiMode = um?.apiMode ?? "openai";
+		if (apiMode !== "openai" || um?.optimization !== "llama.cpp") {
+			return localCount();
+		}
+
+		const baseUrl = um?.baseUrl || config.get<string>("oaicopilot.baseUrl", "");
+		if (!baseUrl || !baseUrl.startsWith("http")) {
+			logger.debug("llamaTokenCount.fallback", { reason: "invalid base URL" });
+			return localCount();
+		}
+
+		// Same key resolution as the chat response path. A missing key is a
+		// fallback condition, not an error — token counting must never break.
+		const provider = um?.owned_by;
+		const useGenericKey = !um?.baseUrl;
+		const modelApiKey = await this.ensureApiKey(useGenericKey, provider);
+		if (!modelApiKey) {
+			logger.debug("llamaTokenCount.fallback", { reason: "missing API key" });
+			return localCount();
+		}
+		const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
+
+		// Build the messages in the exact OpenAI shape the chat template sees.
+		// A plain string becomes a single user message; a chat request message
+		// is converted with the same logic as the chat request itself.
+		let openaiMessages: OpenAIChatMessage[];
+		if (typeof text === "string") {
+			openaiMessages = [{ role: "user", content: text }];
+		} else {
+			const openaiApi = new OpenaiApi(_model.id);
+			openaiMessages = openaiApi.convertMessages([text], {
+				includeReasoningInRequest: true,
+				vision: false,
+			});
+			if (openaiMessages.length === 0) {
+				logger.debug("llamaTokenCount.fallback", { reason: "empty converted messages" });
+				return localCount();
+			}
+		}
+
+		// Wire the upstream cancellation token straight into the fetch signal:
+		// cancelling aborts the in-flight HTTP request (the abort error then
+		// propagates out of provideTokenCount — normal cancellation semantics).
+		const abortController = new AbortController();
+		const cancelSubscription = _token.onCancellationRequested(() => {
+			abortController.abort();
+		});
+		try {
+			const url = buildInputTokensUrl(baseUrl);
+			const body = buildInputTokensBody(parsedModelId.baseId, openaiMessages);
+			const inputTokens = await fetchInputTokens(url, body, requestHeaders, abortController.signal);
+			if (inputTokens !== undefined) {
+				return inputTokens;
+			}
+			logger.warn("llamaTokenCount.fallback", { url, reason: "server-side count unavailable" });
+			return localCount();
+		} finally {
+			cancelSubscription.dispose();
+		}
 	}
 
 	/**
