@@ -8,7 +8,7 @@ import { normalizeUserModels } from "./utils";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { CommonApi } from "./commonApi";
-import { LlamaSpeedDisplay } from "./llamaSpeed";
+import { LlamaSpeedDisplay, END_REASONING_COMMAND, REASONING_NOT_ACTIVE_COMMAND } from "./llamaSpeed";
 import { ReasoningControlManager } from "./reasoningControl";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -121,9 +121,11 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// Invoked by clicking the token status bar during the TG phase of a
+	// reasoning-control request (see LlamaSpeedDisplay).
 	context.subscriptions.push(
-		vscode.commands.registerCommand("oaicopilot.endReasoning", async () => {
-			logger.debug("reasoningControl.command.invoked", { source: "chat-input-status-button" });
+		vscode.commands.registerCommand(END_REASONING_COMMAND, async () => {
+			logger.debug("reasoningControl.command.invoked", { source: "status-bar" });
 			const result = await reasoningControl.endLatestReasoning();
 			logger.debug("reasoningControl.command.result", { success: result.success, message: result.message });
 			if (result.success) {
@@ -131,6 +133,16 @@ export function activate(context: vscode.ExtensionContext) {
 			} else {
 				vscode.window.showWarningMessage(result.message ?? "Unable to end reasoning.");
 			}
+		})
+	);
+
+	// Invoked by clicking the token status bar during the PP phase of a
+	// reasoning-control request: reasoning has not started yet, so there is
+	// nothing to end.
+	context.subscriptions.push(
+		vscode.commands.registerCommand(REASONING_NOT_ACTIVE_COMMAND, () => {
+			logger.debug("reasoningControl.notActive.invoked", { source: "status-bar" });
+			return vscode.window.showInformationMessage("Not in a reasoning phase yet.");
 		})
 	);
 

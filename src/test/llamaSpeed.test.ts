@@ -1,12 +1,14 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import {
+	END_REASONING_COMMAND,
 	formatDurationMs,
 	formatLlamaUsageReport,
 	formatPpLine,
 	formatTgLine,
 	LlamaSpeedDisplay,
 	parseLlamaSpeed,
+	REASONING_NOT_ACTIVE_COMMAND,
 } from "../llamaSpeed";
 import type { TokenUsage } from "../types";
 
@@ -113,6 +115,7 @@ suite("LlamaSpeedDisplay", () => {
 		return {
 			text: "",
 			tooltip: "",
+			command: "oaicopilot.openConfig",
 			backgroundColor: undefined,
 			show() {},
 		} as unknown as vscode.StatusBarItem;
@@ -175,6 +178,44 @@ suite("LlamaSpeedDisplay", () => {
 
 		assert.strictEqual(item.text, "$(zap) TG — t/s 1 tok");
 		assert.strictEqual(item.tooltip, "previous usage tooltip");
+		display.end();
+	});
+
+	test("reasoning control: PP click is the not-active command, TG click ends reasoning", async () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+		display.begin(true);
+
+		// PP phase: tooltip carries the click hint, click reports not-reasoning.
+		display.update({ phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To End Reasoning");
+		assert.strictEqual(item.command, REASONING_NOT_ACTIVE_COMMAND);
+
+		// TG phase: click becomes the end-reasoning command; tooltip stays frozen.
+		display.update({ phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.command, END_REASONING_COMMAND);
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To End Reasoning");
+
+		// Request end restores the default command.
+		display.end();
+		assert.strictEqual(item.command, "oaicopilot.openConfig");
+	});
+
+	test("without reasoning control the default command and tooltip are untouched", async () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+		display.begin();
+
+		display.update({ phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.command, "oaicopilot.openConfig");
+
+		display.update({ phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.command, "oaicopilot.openConfig");
 		display.end();
 	});
 

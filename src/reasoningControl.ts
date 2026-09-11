@@ -2,8 +2,6 @@ import * as vscode from "vscode";
 
 import { logger } from "./logger";
 
-const AVAILABLE_CONTEXT_KEY = "oaicopilot.reasoningControlAvailable";
-const BUSY_CONTEXT_KEY = "oaicopilot.reasoningControlBusy";
 const DEFAULT_CONTROL_TIMEOUT_MS = 10_000;
 
 export interface ReasoningControlTarget {
@@ -92,7 +90,10 @@ export async function sendReasoningControlRequest(
 	}
 }
 
-/** Tracks active completions and the context keys used by the chat input menu. */
+/**
+ * Tracks active opt-in completions so the status bar click (see
+ * LlamaSpeedDisplay / extension.ts) can target the latest one.
+ */
 export class ReasoningControlManager implements vscode.Disposable {
 	private readonly targets = new Map<string, ReasoningControlTarget>();
 	private readonly busyIds = new Set<string>();
@@ -108,13 +109,11 @@ export class ReasoningControlManager implements vscode.Disposable {
 		});
 		this.latestId = target.id;
 		logger.debug("reasoningControl.activate", { id: target.id, model: target.model });
-		this.updateContextKeys();
 	}
 
 	deactivate(id: string | undefined): void {
 		// Unknown ids (e.g. completions captured while the feature was not
-		// wired for this request) are no-ops: nothing to remove and no
-		// context keys to refresh.
+		// wired for this request) are no-ops: nothing to remove.
 		if (!id || !this.targets.has(id)) {
 			return;
 		}
@@ -125,7 +124,6 @@ export class ReasoningControlManager implements vscode.Disposable {
 			const remaining = Array.from(this.targets.keys());
 			this.latestId = remaining.length > 0 ? remaining[remaining.length - 1] : undefined;
 		}
-		this.updateContextKeys();
 	}
 
 	getLatestTarget(): ReasoningControlTarget | undefined {
@@ -148,7 +146,6 @@ export class ReasoningControlManager implements vscode.Disposable {
 		}
 
 		this.busyIds.add(target.id);
-		this.updateContextKeys();
 		try {
 			const result = await sendReasoningControlRequest(target);
 			logger.debug("reasoningControl.endLatestReasoning.result", {
@@ -162,7 +159,6 @@ export class ReasoningControlManager implements vscode.Disposable {
 			return result;
 		} finally {
 			this.busyIds.delete(target.id);
-			this.updateContextKeys();
 		}
 	}
 
@@ -170,25 +166,9 @@ export class ReasoningControlManager implements vscode.Disposable {
 		this.targets.clear();
 		this.busyIds.clear();
 		this.latestId = undefined;
-		this.updateContextKeys();
 	}
 
 	dispose(): void {
 		this.clear();
-	}
-
-	private updateContextKeys(): void {
-		const available = this.latestId !== undefined && this.targets.has(this.latestId);
-		const busy = available && this.latestId !== undefined && this.busyIds.has(this.latestId);
-		void vscode.commands
-			.executeCommand("setContext", AVAILABLE_CONTEXT_KEY, available)
-			.then(undefined, (e: unknown) =>
-				logger.error("reasoningControl.contextFailed", { key: AVAILABLE_CONTEXT_KEY, error: String(e) })
-			);
-		void vscode.commands
-			.executeCommand("setContext", BUSY_CONTEXT_KEY, busy)
-			.then(undefined, (e: unknown) =>
-				logger.error("reasoningControl.contextFailed", { key: BUSY_CONTEXT_KEY, error: String(e) })
-			);
 	}
 }

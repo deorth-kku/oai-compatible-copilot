@@ -555,7 +555,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
-				if (um?.optimization === "llama.cpp" && um?.reasoning_control === true) {
+				// Real-time reasoning control is wired only for opt-in llama.cpp
+				// models; the same flag drives the status bar click behavior
+				// while the stream is live (see LlamaSpeedDisplay).
+				const reasoningControlWired = um?.optimization === "llama.cpp" && um?.reasoning_control === true;
+				if (reasoningControlWired) {
 					logger.debug("reasoningControl.wiring.enabled", { modelId: parsedModelId.baseId });
 					openaiApi.onCompletionId = (completionId) => {
 						logger.debug("reasoningControl.wiring.completionId", { completionId });
@@ -731,7 +735,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from OAI Compatible API");
 				}
 				openaiApi.onSpeedUpdate = (state) => this.llamaSpeed.update(state);
-				this.llamaSpeed.begin();
+				this.llamaSpeed.begin(reasoningControlWired);
 				try {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 					// Experimental llama.cpp disk KV cache post-processing.

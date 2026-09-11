@@ -13,6 +13,11 @@ import type { TokenUsage } from "./types";
 
 export type LlamaSpeedPhase = "pp" | "tg";
 
+/** Status bar command that force-ends the active reasoning block (TG phase). */
+export const END_REASONING_COMMAND = "oaicopilot.endReasoning";
+/** Status bar command while PP is running: reasoning has not started yet. */
+export const REASONING_NOT_ACTIVE_COMMAND = "oaicopilot.reasoningNotActive";
+
 export interface LlamaSpeedState {
 	phase: LlamaSpeedPhase;
 	/** Human-readable single line, e.g. `PP 943.0 t/s 45%`. */
@@ -229,14 +234,26 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	private _pending: LlamaSpeedState | undefined;
 	/** First PP cache detail of the current request; written to the tooltip exactly once. */
 	private _tooltipDetail: string | undefined;
+	/** Whether real-time reasoning control is wired for the current request. */
+	private _reasoningControl = false;
 	private _timer: NodeJS.Timeout | undefined;
 	private _lastWrite = 0;
+	/** Command the slot carries outside of a live request (open configuration). */
+	private readonly defaultCommand: string | vscode.Command | undefined;
 
-	constructor(private readonly item: vscode.StatusBarItem) {}
+	constructor(private readonly item: vscode.StatusBarItem) {
+		this.defaultCommand = this.item.command;
+	}
 
-	/** Mark the start of a request. */
-	begin(): void {
+	/**
+	 * Mark the start of a request.
+	 * @param reasoningControl Whether the request opted into real-time reasoning
+	 * control (llama.cpp + `reasoning_control`); enables the click-to-end
+	 * behavior and the tooltip hint while the stream is live.
+	 */
+	begin(reasoningControl = false): void {
 		this._active++;
+		this._reasoningControl = reasoningControl;
 		// Fresh tooltip snapshot per request (the provider restores the usage
 		// tooltip after the request ends, so nothing is cleared here).
 		this._tooltipDetail = undefined;
@@ -270,6 +287,9 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		this._active--;
 		if (this._active === 0) {
 			this.cancelPending();
+			this._reasoningControl = false;
+			// Restore the default click behavior (open configuration UI).
+			this.item.command = this.defaultCommand;
 		}
 	}
 
@@ -289,12 +309,24 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
 		this.item.backgroundColor = undefined;
 		this.item.text = `${icon} ${state.line}`;
+		// Click behavior: with reasoning control wired, clicking the status bar
+		// force-ends the reasoning once TG is running; during PP reasoning has
+		// not started yet, so the click reports that. Without it, the default
+		// command (open configuration UI) applies.
+		this.item.command = this._reasoningControl
+			? state.phase === "tg"
+				? END_REASONING_COMMAND
+				: REASONING_NOT_ACTIVE_COMMAND
+			: this.defaultCommand;
 		// Tooltip: write the PP cache snapshot exactly once per request (even
 		// if the first flush already carries a TG state, i.e. PP and TG
 		// arrived within the same throttle window). Subsequent flushes leave
-		// it untouched.
+		// it untouched. With reasoning control wired, the click hint is
+		// appended so the hint is visible from the PP phase on.
 		if (this._tooltipDetail !== undefined) {
-			this.item.tooltip = this._tooltipDetail;
+			this.item.tooltip = this._reasoningControl
+				? `${this._tooltipDetail}\nClick To End Reasoning`
+				: this._tooltipDetail;
 			this._tooltipDetail = undefined;
 		}
 		this._lastWrite = Date.now();

@@ -1,5 +1,4 @@
 import * as assert from "assert";
-import * as vscode from "vscode";
 import { ReasoningControlManager, sendReasoningControlRequest, type ReasoningControlTarget } from "../reasoningControl";
 
 const TARGET: ReasoningControlTarget = {
@@ -107,20 +106,6 @@ suite("reasoningControl HTTP client", () => {
 });
 
 suite("ReasoningControlManager", () => {
-	const originalExecuteCommand = vscode.commands.executeCommand;
-	const setContextCalls: Array<unknown[]> = [];
-
-	setup(() => {
-		setContextCalls.length = 0;
-		vscode.commands.executeCommand = (async (command: string, ...args: unknown[]) => {
-			setContextCalls.push([command, ...args]);
-		}) as typeof vscode.commands.executeCommand;
-	});
-
-	teardown(() => {
-		vscode.commands.executeCommand = originalExecuteCommand;
-	});
-
 	const target = (id: string): ReasoningControlTarget => ({
 		id,
 		model: "m",
@@ -128,13 +113,10 @@ suite("ReasoningControlManager", () => {
 		headers: { Authorization: "Bearer key" },
 	});
 
-	test("activating a target sets the available context key", () => {
+	test("activating a target makes it the latest target", () => {
 		const manager = new ReasoningControlManager();
 		manager.activate(target("c1"));
-		assert.deepStrictEqual(setContextCalls, [
-			["setContext", "oaicopilot.reasoningControlAvailable", true],
-			["setContext", "oaicopilot.reasoningControlBusy", false],
-		]);
+		assert.strictEqual(manager.getLatestTarget()?.id, "c1");
 		manager.dispose();
 	});
 
@@ -158,17 +140,15 @@ suite("ReasoningControlManager", () => {
 		manager.dispose();
 	});
 
-	test("deactivating an unknown id is a no-op (no context updates)", () => {
+	test("deactivating an unknown id is a no-op", () => {
 		const manager = new ReasoningControlManager();
 		manager.activate(target("c1"));
-		setContextCalls.length = 0;
 		manager.deactivate("unknown");
-		assert.deepStrictEqual(setContextCalls, []);
 		assert.strictEqual(manager.getLatestTarget()?.id, "c1");
 		manager.dispose();
 	});
 
-	test("endLatestReasoning succeeds, deactivates, and clears the busy key", async () => {
+	test("endLatestReasoning succeeds and deactivates the target", async () => {
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = async () =>
 			new Response(JSON.stringify({ success: true }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -178,10 +158,6 @@ suite("ReasoningControlManager", () => {
 			const result = await manager.endLatestReasoning();
 			assert.strictEqual(result.success, true);
 			assert.strictEqual(manager.getLatestTarget(), undefined);
-			assert.deepStrictEqual(setContextCalls.slice(-2), [
-				["setContext", "oaicopilot.reasoningControlAvailable", false],
-				["setContext", "oaicopilot.reasoningControlBusy", false],
-			]);
 			manager.dispose();
 		} finally {
 			globalThis.fetch = originalFetch;
