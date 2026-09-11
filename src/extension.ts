@@ -155,8 +155,8 @@ export function activate(context: vscode.ExtensionContext) {
 			const pick = await vscode.window.showQuickPick(
 				targets.map((t) => ({
 					label: t.model,
-					description: `TG ${formatTgElapsed(t.tgStartedAt)}`,
-					detail: `${t.id} · ${t.baseUrl}`,
+					description: t.baseUrl,
+					detail: `${t.id} thinking: ${formatTgElapsed(t.tgStartedAt)}`,
 					target: t,
 				})),
 				{ placeHolder: "Select the stream to end reasoning on" }
