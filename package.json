@@ -51,8 +51,7 @@
 		"languageModelChatProviders": [
 			{
 				"vendor": "oaicopilot",
-				"displayName": "OAI Compatible",
-				"managementCommand": "oaicopilot.setApikey"
+				"displayName": "OAI Compatible"
 			}
 		],
 		"commands": [

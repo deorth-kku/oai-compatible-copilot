@@ -27,7 +27,7 @@ const EXTENSION_LABEL = "OAICopilot";
  * @returns A promise that resolves to the list of available language models
  */
 export async function prepareLanguageModelChatInformation(
-	options: { silent: boolean },
+	options: { silent: boolean; configuredApiKey?: string },
 	_token: CancellationToken,
 	secrets: vscode.SecretStorage
 ): Promise<LanguageModelChatInformation[]> {
@@ -91,7 +91,7 @@ export async function prepareLanguageModelChatInformation(
 			});
 	} else {
 		// Fallback: Fetch models from API
-		const apiKey = await ensureApiKey(options.silent, secrets);
+		const apiKey = await ensureApiKey(options.silent, secrets, options.configuredApiKey);
 		if (!apiKey) {
 			if (options.silent) {
 				return [];
@@ -231,9 +231,17 @@ export async function fetchModels(
  * @param silent If true, do not prompt the user.
  * @param secrets vscode.SecretStorage
  */
-async function ensureApiKey(silent: boolean, secrets: vscode.SecretStorage): Promise<string | undefined> {
+async function ensureApiKey(
+	silent: boolean,
+	secrets: vscode.SecretStorage,
+	configuredApiKey?: string
+): Promise<string | undefined> {
 	// Fall back to generic API key
 	let apiKey = await secrets.get("oaicopilot.apiKey");
+
+	if (!apiKey && configuredApiKey) {
+		apiKey = configuredApiKey;
+	}
 
 	if (!apiKey && !silent) {
 		const entered = await vscode.window.showInputBox({

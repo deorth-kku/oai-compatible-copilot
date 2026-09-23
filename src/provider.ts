@@ -6,6 +6,7 @@ import {
 	LanguageModelChatRequestMessage,
 	LanguageModelChatTool,
 	ProvideLanguageModelChatResponseOptions,
+	PrepareLanguageModelChatModelOptions,
 	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
@@ -74,6 +75,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	/** Track last request completion time for delay calculation. */
 	private _lastRequestTime: number | null = null;
 
+	/**
+	 * The API key provided via the `configuration` contribution (entered through the
+	 * model picker's manage flow). Cached so it can be used at request time.
+	 */
+	private _configuredApiKey: string | undefined;
+
 	private readonly _geminiToolCallMetaByCallId = new Map<string, GeminiToolCallMeta>();
 	private readonly _openaiResponsesPreviousResponseIdUnsupportedBaseUrls = new Set<string>();
 
@@ -106,10 +113,19 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	 * @returns A promise that resolves to the list of available language models
 	 */
 	async provideLanguageModelChatInformation(
-		options: { silent: boolean },
+		options: PrepareLanguageModelChatModelOptions,
 		_token: CancellationToken
 	): Promise<LanguageModelChatInformation[]> {
-		return prepareLanguageModelChatInformation({ silent: options.silent ?? false }, _token, this.secrets);
+		const configuredApiKey =
+			typeof options.configuration?.apiKey === "string" ? options.configuration.apiKey : undefined;
+		if (configuredApiKey) {
+			this._configuredApiKey = configuredApiKey;
+		}
+		return prepareLanguageModelChatInformation(
+			{ silent: options.silent ?? false, configuredApiKey },
+			_token,
+			this.secrets
+		);
 	}
 
 	/**
@@ -906,6 +922,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		// Fall back to generic API key
 		if (!apiKey) {
 			apiKey = await this.secrets.get("oaicopilot.apiKey");
+		}
+
+		// Fall back to the API key provided via the `configuration` contribution
+		// (entered through the model picker's manage flow).
+		if (!apiKey && this._configuredApiKey) {
+			apiKey = this._configuredApiKey;
 		}
 
 		if (!apiKey && useGenericKey) {

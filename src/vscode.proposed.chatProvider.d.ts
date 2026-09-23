@@ -17,6 +17,23 @@ declare module "vscode" {
 	}
 
 	/**
+	 * Options for {@linkcode LanguageModelChatProvider.provideLanguageModelChatInformation}
+	 */
+	export interface PrepareLanguageModelChatModelOptions {
+		/**
+		 * Whether the models are being requested silently (e.g. for the model picker)
+		 * or in response to a user action.
+		 */
+		readonly silent: boolean;
+
+		/**
+		 * The resolved configuration for the language model chat provider, as defined
+		 * by the `configuration` property in the `languageModelChatProviders` contribution.
+		 */
+		readonly configuration?: { readonly [key: string]: unknown };
+	}
+
+	/**
 	 * All the information representing a single language model contributed by a {@linkcode LanguageModelChatProvider}.
 	 */
 	export interface LanguageModelChatInformation {
