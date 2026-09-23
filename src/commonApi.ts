@@ -49,25 +49,34 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	protected _thinkingFlushTimer: NodeJS.Timeout | null = null;
 
 	/**
-	 * Cache of the last real reasoning text, keyed per turn *and* per conversation.
+	 * Cache of the real reasoning text per turn, per conversation.
 	 * Copilot Chat does not always round-trip assistant `LanguageModelThinkingPart`s
 	 * into the next request's history (the thinking is only persisted as an opaque
 	 * `ThinkingData` block that may be dropped on rebuild). When `convertMessages`
 	 * cannot find a `LanguageModelThinkingPart` for an assistant turn, we replay
 	 * the cached real reasoning instead of fabricating a placeholder.
 	 *
-	 * Keyed by `${convId}#${index}` where `index` is the absolute position the
-	 * assistant response occupies in the (append-only) conversation and `convId`
-	 * is a per-conversation id derived from the request history (see `computeConvId`).
-	 * The key is intentionally model-agnostic so that switching models mid-session
-	 * keeps replaying the same turn's reasoning instead of dropping it.
+	 * Keyed by `${convId}#${turnHash}` where `turnHash` is a content hash of the
+	 * assistant turn's text + tool calls (see `computeTurnHashFromParts`) and
+	 * `convId` is a per-conversation id derived from the request history (see
+	 * `computeConvId`). A content hash — unlike the positional index the cache
+	 * used to be keyed by — survives context compression/summarization, which
+	 * shortens the history and shifts indices (which used to break replay and
+	 * could even misattribute one turn's reasoning to another). The key is
+	 * intentionally model-agnostic so that switching models mid-session keeps
+	 * replaying the same turn's reasoning instead of dropping it.
 	 *
-	 * Pre-release caches were keyed `${convId}#${modelId}#${index}`; `hydrate`
-	 * rewrites those persisted keys on load by dropping the model segment.
+	 * The entry is written at the end of the streaming turn (see
+	 * `endTurnCapture`) because the content hash is only known once the turn's
+	 * text/tool calls have been emitted.
+	 *
+	 * Older caches were keyed by positional index (`${convId}#${index}`, and
+	 * before that `${convId}#${modelId}#${index}`); `hydrate` drops those
+	 * persisted entries on load because they cannot be mapped to content hashes.
 	 *
 	 * The `convId` is what stops reasoning from one chat session leaking into
 	 * another ("串台"): without it, two unrelated sessions with the same message
-	 * count would share a cache key.
+	 * content would share a cache key.
 	 */
 	private static readonly _reasoningByTurn: Map<string, string> = new Map<string, string>();
 
@@ -90,23 +99,25 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	}
 
 	/**
-	 * Normalize a persisted cache key to the current on-disk format.
+	 * Validate a persisted cache key against the current on-disk format
+	 * (`${convId}#${turnHash}`), returning the key to keep or `null` to drop.
 	 *
-	 * Before this change the cache was keyed `${convId}#${modelId}#${index}`; it
-	 * is now `${convId}#${index}` so switching models mid-conversation keeps
-	 * replaying the same turn's reasoning instead of dropping it. Keys persisted
-	 * by older versions still contain the model segment, so here we strip it: a
-	 * key with three or more `#`-separated parts (convId, modelId, …, index) is
-	 * rewritten to two parts (convId, index). Keys already in the new two-part
-	 * form are returned unchanged. Because `convId` is a base-36 hash (no `#`) and
-	 * the index is numeric, an old key always has ≥3 parts while a new key always
-	 * has exactly 2, so the two formats never collide.
+	 * Older versions keyed the cache by the turn's positional index
+	 * (`${convId}#${index}`, and before that `${convId}#${modelId}#${index}`).
+	 * Positional keys cannot be mapped to the content-hash scheme, so they are
+	 * dropped on hydrate. The turn key is the last `#`-separated segment: old
+	 * keys end in a plain numeric index, while new keys end in a base-36 content
+	 * hash. (An all-digit base-36 hash is extremely unlikely; at worst it would
+	 * cost one cache miss.)
 	 */
-	private static migrateCacheKey(key: string): string {
+	private static migrateCacheKey(key: string): string | null {
 		const parts = key.split("#");
-		if (parts.length >= 3) {
-			// convId#modelId[..#...]*#index → convId#index
-			return `${parts[0]}#${parts[parts.length - 1]}`;
+		if (parts.length < 2) {
+			return null;
+		}
+		const turnKey = parts[parts.length - 1];
+		if (/^\d+$/.test(turnKey)) {
+			return null;
 		}
 		return key;
 	}
@@ -121,7 +132,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			if (stored && typeof stored === "object") {
 				for (const [k, v] of Object.entries(stored)) {
 					if (typeof k === "string" && typeof v === "string") {
-						CommonApi._reasoningByTurn.set(CommonApi.migrateCacheKey(k), v);
+						const migrated = CommonApi.migrateCacheKey(k);
+						if (migrated !== null) {
+							CommonApi._reasoningByTurn.set(migrated, v);
+						}
 					}
 				}
 			}
@@ -200,8 +214,15 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected _turnReasoning = "";
 
-	/** Turn key (without convId) under which the current streaming turn's reasoning is cached. */
-	protected _currentTurnKey = "";
+	/**
+	 * The assistant parts (text + tool calls, in emit order) reported to VS Code
+	 * during the current streaming turn. Retained so the turn's content hash
+	 * (the cache key) can be computed at the end of the turn — the hash is only
+	 * known once the turn's content has been emitted. Thinking/data parts are
+	 * not recorded: they are excluded from the hash so it stays aligned with
+	 * what VS Code round-trips into history.
+	 */
+	protected _turnAssistantParts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart> = [];
 
 	/**
 	 * Per-conversation id derived from the request history. VS Code only
@@ -314,12 +335,67 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	}
 
 	/**
-	 * Set the turn key for the current turn. Called by the provider before
-	 * `convertMessages`/`processStreamingResponse` so both the replay lookup and
-	 * the capture write target the same turn.
+	 * Normalize an ordered part sequence into content fragments: consecutive
+	 * text parts are merged and trimmed into `T<text>` fragments; tool calls
+	 * become `C<name>~<canonicalJson(input)>` fragments. Thinking, data and
+	 * tool-result parts are excluded — thinking is what the cache is meant to
+	 * recover, and data parts are opaque blobs that may be dropped on rebuild.
+	 *
+	 * Merging consecutive text (and trimming each merged segment) makes the hash
+	 * insensitive to how VS Code splits/merges text parts when it round-trips
+	 * the message, and to whitespace-only flush parts. Returns `null` when the
+	 * sequence carries no text/tool-call content (e.g. a pure-thinking turn),
+	 * which must not be hashed — an empty hash would collide across turns.
 	 */
-	setCurrentTurnKey(key: string): void {
-		this._currentTurnKey = key;
+	static turnFragments(parts: readonly unknown[]): string[] | null {
+		const frags: string[] = [];
+		let buf = "";
+		for (const part of parts) {
+			if (part instanceof vscode.LanguageModelTextPart) {
+				buf += part.value;
+			} else if (part instanceof vscode.LanguageModelToolCallPart) {
+				const text = buf.trim();
+				if (text) {
+					frags.push(`T${text}`);
+				}
+				buf = "";
+				frags.push(`C${part.name}~${CommonApi.canonicalJson(part.input ?? {})}`);
+			}
+		}
+		const text = buf.trim();
+		if (text) {
+			frags.push(`T${text}`);
+		}
+		return frags.length > 0 ? frags : null;
+	}
+
+	/**
+	 * Content hash identifying an assistant turn (see {@link turnFragments}).
+	 * Used as the reasoning-cache turn key on both sides: the write side hashes
+	 * the parts emitted to VS Code, the read side hashes the parts VS Code
+	 * round-trips into history — the same normalization keeps them aligned.
+	 * Returns `null` when the turn has no text/tool-call content to hash.
+	 */
+	static computeTurnHashFromParts(parts: readonly unknown[]): string | null {
+		const frags = CommonApi.turnFragments(parts);
+		return frags ? CommonApi.hashString(frags.join("\u0000")) : null;
+	}
+
+	/**
+	 * Deterministic JSON serialization for hashing: object keys sorted
+	 * recursively, so the result does not depend on key order (which differs
+	 * between what we emit and what VS Code round-trips).
+	 */
+	private static canonicalJson(value: unknown): string {
+		if (value === null || typeof value !== "object") {
+			return JSON.stringify(value) ?? "null";
+		}
+		if (Array.isArray(value)) {
+			return `[${value.map((v) => CommonApi.canonicalJson(v)).join(",")}]`;
+		}
+		const obj = value as Record<string, unknown>;
+		const keys = Object.keys(obj).sort();
+		return `{${keys.map((k) => `${JSON.stringify(k)}:${CommonApi.canonicalJson(obj[k])}`).join(",")}}`;
 	}
 
 	/** Build the full cache key (conversation-scoped) for a turn key. */
@@ -327,36 +403,75 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		return this._convId ? `${this._convId}#${turnKey}` : turnKey;
 	}
 
-	/** Record the real reasoning produced for this model so later turns can replay it. */
+	/**
+	 * Append streamed reasoning text to the per-turn accumulator. The cache
+	 * entry itself is written at the end of the turn (see `endTurnCapture`),
+	 * because the turn's content hash is only known once its text/tool calls
+	 * have been emitted.
+	 */
 	protected cacheReasoning(text: string): void {
-		if (text && this._currentTurnKey) {
+		if (text) {
 			this._turnReasoning += text;
-			CommonApi._reasoningByTurn.set(this.reasoningKey(this._currentTurnKey), this._turnReasoning);
-			// Write-through to globalState (debounced) so replay survives reload.
-			CommonApi.schedulePersist();
 		}
 	}
 
 	/**
-	 * Reset the per-turn reasoning accumulator. Call this at the start of each
-	 * streaming turn so a new turn accumulates fresh reasoning and the previously
-	 * cached full trace remains available for convertMessages (which runs before
-	 * streaming) to replay into the outgoing request.
+	 * Reset the per-turn reasoning accumulator and assistant-parts capture.
+	 * Call this at the start of each streaming turn so a new turn accumulates
+	 * fresh reasoning and the previously cached full trace remains available
+	 * for convertMessages (which runs before streaming) to replay into the
+	 * outgoing request.
 	 */
 	protected beginReasoningCapture(): void {
 		this._turnReasoning = "";
+		this._turnAssistantParts = [];
 	}
 
 	/**
-	 * Best-effort real reasoning for a given turn key, or undefined if none.
-	 * @param turnKey The turn key (defaults to the current streaming turn).
+	 * Finalize the current streaming turn's reasoning capture. Call this from
+	 * the `finally` block of `processStreamingResponse`, after
+	 * `reportEndThinking`, so it runs on every exit path (normal completion,
+	 * [DONE], cancellation, errors) and after the last thinking chunk has been
+	 * flushed into `_turnReasoning`.
+	 *
+	 * The cache entry is keyed by the turn's content hash rather than its
+	 * positional index, so it survives context compression/summarization that
+	 * shortens the history. For interrupted turns the entry is written for
+	 * whatever was emitted: if VS Code kept that partial assistant message in
+	 * history it still matches; otherwise the entry is orphaned and eventually
+	 * LRU-evicted (harmless).
+	 *
+	 * Turns with no text/tool-call content (pure thinking) are not cached:
+	 * there is no stable content to hash, and an empty hash would collide
+	 * across turns.
 	 */
-	protected getCachedReasoning(turnKey?: string): string | undefined {
-		const key = turnKey ?? this._currentTurnKey;
-		if (!key) {
+	protected endTurnCapture(): void {
+		if (!this._turnReasoning.trim() || this._turnAssistantParts.length === 0) {
+			return;
+		}
+		const turnKey = CommonApi.computeTurnHashFromParts(this._turnAssistantParts);
+		if (!turnKey) {
+			return;
+		}
+		CommonApi._reasoningByTurn.set(this.reasoningKey(turnKey), this._turnReasoning);
+		this._turnReasoning = "";
+		this._turnAssistantParts = [];
+		// Write-through to globalState (debounced) so replay survives reload,
+		// plus an immediate best-effort flush so the last turn isn't lost if
+		// the window closes right after.
+		CommonApi.schedulePersist();
+		void CommonApi.flushNow();
+	}
+
+	/**
+	 * Best-effort real reasoning for a given turn, or undefined if none.
+	 * @param turnKey The turn's content hash (from `computeTurnHashFromParts`).
+	 */
+	protected getCachedReasoning(turnKey: string): string | undefined {
+		if (!turnKey) {
 			return undefined;
 		}
-		const fullKey = this.reasoningKey(key);
+		const fullKey = this.reasoningKey(turnKey);
 		const cached = CommonApi._reasoningByTurn.get(fullKey);
 		if (cached === undefined) {
 			return undefined;
@@ -393,15 +508,11 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Convert VS Code chat messages to specific api message format.
 	 * @param messages The VS Code chat messages to convert.
 	 * @param modelConfig Config for special model.
-	 * @param startIndex Absolute index of `messages[0]` in the full conversation
-	 *   (default 0). Used to derive per-turn cache keys that stay aligned with the
-	 *   streaming capture key even when only a delta slice is converted.
 	 * @returns Specific api messages array.
 	 */
 	abstract convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean },
-		startIndex?: number
+		modelConfig: { includeReasoningInRequest: boolean }
 	): TMessage[];
 
 	/**

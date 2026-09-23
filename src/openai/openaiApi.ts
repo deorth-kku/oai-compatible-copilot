@@ -95,14 +95,10 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: ModelConversionConfig,
-		startIndex?: number
+		modelConfig: ModelConversionConfig
 	): OpenAIChatMessage[] {
-		const base = startIndex ?? 0;
 		const out: OpenAIChatMessage[] = [];
-		for (let i = 0; i < messages.length; i++) {
-			const m = messages[i];
-			const absIndex = base + i;
+		for (const m of messages) {
 			const role = mapRole(m);
 			const textParts: string[] = [];
 			const imageParts: vscode.LanguageModelDataPart[] = [];
@@ -151,11 +147,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 					// Prefer the longer of the round-tripped thinking and the cached
 					// full trace. Copilot Chat may round-trip only a fragment of the
 					// previous turn's thinking into history (e.g. "."), so the cached
-					// full trace is often more complete. Key by this item's absolute
-					// conversation index (model-agnostic) so each turn keeps its own
-					// reasoning even after switching models.
-					const turnKey = String(absIndex);
-					const cached = this.getCachedReasoning(turnKey);
+					// full trace is often more complete. Key by this turn's content
+					// hash (text + tool calls) so replay survives context compression
+					// and stays model-agnostic.
+					const turnKey = CommonApi.computeTurnHashFromParts(m.content ?? []);
+					const cached = turnKey ? this.getCachedReasoning(turnKey) : undefined;
 					const reasoning =
 						joinedThinking && cached
 							? joinedThinking.length >= cached.length
@@ -395,6 +391,21 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	): Promise<void> {
 		const modelId = this._modelId;
 		this.beginReasoningCapture();
+		// Wrap the progress reporter so the assistant parts reported to VS Code
+		// (text + tool calls, in emit order) are recorded for the turn's content
+		// hash. Capturing at the report boundary guarantees the hash matches what
+		// VS Code stores in history (readFile parameter adjustments, the
+		// begin-tool-calls whitespace hint, XML think splits, etc. are all
+		// included).
+		const outerProgress = progress;
+		progress = {
+			report: (part) => {
+				if (part instanceof vscode.LanguageModelTextPart || part instanceof vscode.LanguageModelToolCallPart) {
+					this._turnAssistantParts.push(part);
+				}
+				outerProgress.report(part);
+			},
+		};
 		this._completionId = undefined;
 		this._llamaIdSlot = undefined;
 		this._reasoningEndFired = false;
@@ -493,8 +504,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			throw e;
 		} finally {
 			reader.releaseLock();
-			// If there's an active thinking sequence, end it first
+			// If there's an active thinking sequence, end it first (this also
+			// flushes the last thinking chunk into the per-turn accumulator).
 			this.reportEndThinking(progress);
+			// Persist this turn's reasoning under its content hash.
+			this.endTurnCapture();
 			// Report accumulated usage for the Context Window widget
 			this.reportUsage(progress);
 		}

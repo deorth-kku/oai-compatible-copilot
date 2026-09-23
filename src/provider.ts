@@ -378,19 +378,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// message in `requestMessages`, which would make the id collide
 				// across sessions.
 				openaiResponsesApi.setConvIdFromMessages(messages);
-				// Key the current turn by the absolute index the response will occupy
-				// in the full history (append-only), so it matches the replay key.
-				// Model-agnostic so switching models mid-session keeps replaying reasoning.
-				openaiResponsesApi.setCurrentTurnKey(String(requestMessages.length));
 
-				// Convert full history once (also extracts system `instructions`).
-				const fullInput = openaiResponsesApi.convertMessages(requestMessages, modelConfig);
+					// Convert full history once (also extracts system `instructions`).
+					const fullInput = openaiResponsesApi.convertMessages(requestMessages, modelConfig);
 
-				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, requestMessages);
-				let deltaInput: unknown[] | null = null;
-				if (marker && marker.index >= 0 && marker.index < requestMessages.length - 1) {
-					const deltaMessages = requestMessages.slice(marker.index + 1);
-					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig, marker.index + 1);
+					const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, requestMessages);
+					let deltaInput: unknown[] | null = null;
+					if (marker && marker.index >= 0 && marker.index < requestMessages.length - 1) {
+						const deltaMessages = requestMessages.slice(marker.index + 1);
+						const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
 					if (converted.length > 0) {
 						deltaInput = converted;
 					}
@@ -593,10 +589,6 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// message in `requestMessages`, which would make the id collide
 				// across sessions.
 				openaiApi.setConvIdFromMessages(messages);
-				// Key the current turn by the absolute index the response will occupy
-				// (the conversation is append-only, so this matches the replay key).
-				// Model-agnostic so switching models mid-session keeps replaying reasoning.
-				openaiApi.setCurrentTurnKey(String(requestMessages.length));
 				const openaiMessages = openaiApi.convertMessages(requestMessages, modelConfig);
 
 				// requestBody

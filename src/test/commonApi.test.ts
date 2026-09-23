@@ -22,8 +22,7 @@ class TestApi extends CommonApi<unknown, unknown> {
 
 	convertMessages(
 		_messages: readonly LanguageModelChatRequestMessage[],
-		_modelConfig: { includeReasoningInRequest: boolean },
-		_startIndex?: number
+		_modelConfig: { includeReasoningInRequest: boolean }
 	): unknown[] {
 		return [];
 	}
