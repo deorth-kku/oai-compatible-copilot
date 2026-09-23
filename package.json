@@ -94,7 +94,7 @@
 				{
 					"command": "oaicopilot.generateGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !oaicopilot.isGeneratingCommit"
+					"when": "config.git.enabled && scmProvider == git && !oaicopilot.isGeneratingCommit && oaicopilot.commitModelConfigured"
 				},
 				{
 					"command": "oaicopilot.abortGitCommitMessage",
@@ -105,7 +105,7 @@
 			"commandPalette": [
 				{
 					"command": "oaicopilot.generateGitCommitMessage",
-					"when": "config.git.enabled && !oaicopilot.isGeneratingCommit"
+					"when": "config.git.enabled && !oaicopilot.isGeneratingCommit && oaicopilot.commitModelConfigured"
 				},
 				{
 					"command": "oaicopilot.abortGitCommitMessage",

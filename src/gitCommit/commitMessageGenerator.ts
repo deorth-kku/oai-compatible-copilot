@@ -265,6 +265,16 @@ export function abortCommitGeneration() {
 }
 
 /**
+ * Check whether at least one model is marked for commit message generation.
+ * Used to show/hide the SCM commit button via a `when` context key.
+ */
+export function isCommitModelConfigured(): boolean {
+	const config = vscode.workspace.getConfiguration();
+	const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+	return userModels.some((model: HFModelItem) => model.useForCommitGeneration === true);
+}
+
+/**
  * Extracts the commit message from the AI response
  * @param str String containing the AI response
  * @returns The extracted commit message

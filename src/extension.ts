@@ -5,7 +5,7 @@ import { initStatusBar } from "./statusBar";
 import { ConfigViewPanel } from "./views/configView";
 import { logger } from "./logger";
 import { normalizeUserModels } from "./utils";
-import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
+import { abortCommitGeneration, generateCommitMsg, isCommitModelConfigured } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { CommonApi } from "./commonApi";
 import { LlamaSpeedDisplay, END_REASONING_COMMAND } from "./llamaSpeed";
@@ -188,11 +188,22 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// Watch for logLevel configuration changes
+	// Track whether a commit model is configured so the SCM commit button can
+	// be hidden (via the `oaicopilot.commitModelConfigured` when-context) when
+	// no model is marked with `useForCommitGeneration`.
+	const updateCommitModelContext = () => {
+		vscode.commands.executeCommand("setContext", "oaicopilot.commitModelConfigured", isCommitModelConfigured());
+	};
+	updateCommitModelContext();
+
+	// Watch for configuration changes
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
 			if (e.affectsConfiguration("oaicopilot.logLevel")) {
 				logger.reloadConfig();
+			}
+			if (e.affectsConfiguration("oaicopilot.models")) {
+				updateCommitModelContext();
 			}
 		})
 	);
