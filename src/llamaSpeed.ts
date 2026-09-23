@@ -268,6 +268,16 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	}
 
 	/**
+	 * Whether at least one request is in flight and owns the live speed
+	 * display. Callers that want to refresh the slot's token usage display
+	 * after a request ends should skip while this is true: the live display
+	 * owns the slot, and the LAST request to end will refresh it.
+	 */
+	get hasActive(): boolean {
+		return this._requests.length > 0;
+	}
+
+	/**
 	 * Mark the start of a request and return its id, which must be passed back
 	 * to {@link update} and {@link end}.
 	 * @param reasoningControl Whether the request opted into real-time reasoning

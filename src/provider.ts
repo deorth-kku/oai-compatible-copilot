@@ -826,7 +826,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					this.llamaSpeed.end(speedId);
 					// Streaming overwrote the token usage display; refresh it now that
 					// the request is done (server usage first, history count fallback).
-					this.refreshTokenDisplay(openaiApi, requestMessages, options.tools, model, modelConfig);
+					// Skip while another request is still in flight: the live speed
+					// display owns the slot (line AND tooltip), and refreshing here
+					// would wipe it. The last request to end will refresh it.
+					if (!this.llamaSpeed.hasActive) {
+						this.refreshTokenDisplay(openaiApi, requestMessages, options.tools, model, modelConfig);
+					}
 				}
 			}
 		} catch (err) {

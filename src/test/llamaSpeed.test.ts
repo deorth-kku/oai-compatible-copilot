@@ -238,6 +238,22 @@ suite("LlamaSpeedDisplay", () => {
 		display.end(b);
 	});
 
+	test("hasActive tracks in-flight requests", () => {
+		const item = createItemStub();
+		const display = new LlamaSpeedDisplay(item);
+		assert.strictEqual(display.hasActive, false);
+
+		const a = display.begin();
+		assert.strictEqual(display.hasActive, true);
+		const b = display.begin();
+		assert.strictEqual(display.hasActive, true);
+
+		display.end(a);
+		assert.strictEqual(display.hasActive, true);
+		display.end(b);
+		assert.strictEqual(display.hasActive, false);
+	});
+
 	test("concurrent requests: the display follows the most recently started request", async () => {
 		const item = createItemStub();
 		const display = new LlamaSpeedDisplay(item);
