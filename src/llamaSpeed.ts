@@ -223,23 +223,41 @@ export function parseLlamaSpeed(parsed: Record<string, unknown>): LlamaSpeedStat
 	return state;
 }
 
+/** Per-request bookkeeping for the shared display. */
+interface LiveRequest {
+	id: number;
+	reasoningControl: boolean;
+	/** Latest speed state reported for this request (undefined before the first chunk). */
+	state: LlamaSpeedState | undefined;
+	/** First PP cache detail; rendered into the tooltip exactly once. */
+	tooltipDetail: string | undefined;
+}
+
 /**
  * Renders live llama.cpp PP/TG state into an existing status bar slot while at
- * least one request is in flight. The status bar LINE updates in real time
- * (throttled); the TOOLTIP is a one-shot snapshot of the first PP cache
- * detail, so the hover text stays static and does not flicker on every
- * chunk. The slot's token usage display is refreshed by the provider after
- * the request ends (no snapshot/restore here).
+ * least one request is in flight.
+ *
+ * With CONCURRENT requests the display always follows the MOST RECENTLY
+ * STARTED request: the status bar LINE and the TOOLTIP (a one-shot snapshot of
+ * the first PP cache detail) come from the SAME request, so the two never
+ * disagree. Chunks from an earlier request that arrive later are stored for
+ * that request but do not clobber the rendered display. When the rendered
+ * request ends, the display falls back to the previous request's state and
+ * tooltip snapshot.
+ *
+ * The status bar LINE updates in real time (throttled); the TOOLTIP stays
+ * static and does not flicker on every chunk. The slot's token usage display
+ * is refreshed by the provider after the request ends (no snapshot/restore
+ * here).
  */
 export class LlamaSpeedDisplay implements vscode.Disposable {
 	private static readonly THROTTLE_MS = 250;
 
-	private _active = 0;
-	private _pending: LlamaSpeedState | undefined;
-	/** First PP cache detail of the current request; written to the tooltip exactly once. */
-	private _tooltipDetail: string | undefined;
-	/** Whether real-time reasoning control is wired for the current request. */
-	private _reasoningControl = false;
+	private _nextId = 0;
+	/** In-flight requests in start order; the last entry is the "latest". */
+	private readonly _requests: LiveRequest[] = [];
+	/** Id of the request whose tooltip snapshot is currently shown. */
+	private _tooltipShownFor: number | undefined;
 	private _timer: NodeJS.Timeout | undefined;
 	private _lastWrite = 0;
 	/** Command the slot carries outside of a live request (open configuration). */
@@ -250,30 +268,58 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	}
 
 	/**
-	 * Mark the start of a request.
+	 * Mark the start of a request and return its id, which must be passed back
+	 * to {@link update} and {@link end}.
 	 * @param reasoningControl Whether the request opted into real-time reasoning
 	 * control (llama.cpp + `reasoning_control`); enables the click-to-end
 	 * behavior and the tooltip hint while the stream is live.
 	 */
-	begin(reasoningControl = false): void {
-		this._active++;
-		this._reasoningControl = reasoningControl;
-		// Fresh tooltip snapshot per request (the provider restores the usage
-		// tooltip after the request ends, so nothing is cleared here).
-		this._tooltipDetail = undefined;
+	begin(reasoningControl = false): number {
+		const id = this._nextId++;
+		this._requests.push({
+			id,
+			reasoningControl,
+			state: undefined,
+			tooltipDetail: undefined,
+		});
+		return id;
 	}
 
-	/** Report a new speed state; UI writes are throttled (trailing edge). */
-	update(state: LlamaSpeedState): void {
-		if (this._active === 0) {
+	/** Report a new speed state for a request; UI writes are throttled (trailing edge). */
+	update(id: number, state: LlamaSpeedState): void {
+		const req = this._requests.find((r) => r.id === id);
+		if (!req) {
 			return;
 		}
 		// Capture the first PP detail for the tooltip. The TG detail
 		// (`prompt N tok`) is less informative and must never overwrite it.
-		if (state.phase === "pp" && state.detail && this._tooltipDetail === undefined) {
-			this._tooltipDetail = state.detail;
+		if (state.phase === "pp" && state.detail && req.tooltipDetail === undefined) {
+			req.tooltipDetail = state.detail;
 		}
-		this._pending = state;
+		req.state = state;
+		this.scheduleFlush();
+	}
+
+	/** Mark the end of a request; the display falls back to the previous one. */
+	end(id: number): void {
+		const index = this._requests.findIndex((r) => r.id === id);
+		if (index === -1) {
+			return;
+		}
+		const wasLatest = index === this._requests.length - 1;
+		this._requests.splice(index, 1);
+		if (this._requests.length === 0) {
+			this.cancelPending();
+			// Restore the default click behavior (open configuration UI).
+			this.item.command = this.defaultCommand;
+		} else if (wasLatest) {
+			// The rendered request changed: the next flush falls back to the
+			// previous request's state and tooltip snapshot.
+			this.scheduleFlush();
+		}
+	}
+
+	private scheduleFlush(): void {
 		if (this._timer === undefined) {
 			const delay = Math.max(0, LlamaSpeedDisplay.THROTTLE_MS - (Date.now() - this._lastWrite));
 			this._timer = setTimeout(() => {
@@ -283,59 +329,62 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		}
 	}
 
-	/** Mark the end of a request; clears any pending throttled write at zero. */
-	end(): void {
-		if (this._active <= 0) {
-			return;
-		}
-		this._active--;
-		if (this._active === 0) {
-			this.cancelPending();
-			this._reasoningControl = false;
-			// Restore the default click behavior (open configuration UI).
-			this.item.command = this.defaultCommand;
-		}
-	}
-
 	private cancelPending(): void {
 		if (this._timer !== undefined) {
 			clearTimeout(this._timer);
 			this._timer = undefined;
 		}
-		this._pending = undefined;
+	}
+
+	/** The request whose state is rendered: the most recent one that reported a state. */
+	private renderedRequest(): LiveRequest | undefined {
+		for (let i = this._requests.length - 1; i >= 0; i--) {
+			const req = this._requests[i];
+			if (req.state) {
+				return req;
+			}
+		}
+		return undefined;
 	}
 
 	private flush(): void {
-		const state = this._pending;
-		if (!state || this._active === 0) {
+		const latest = this._requests[this._requests.length - 1];
+		if (!latest) {
 			return;
 		}
-		const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
-		this.item.backgroundColor = undefined;
-		this.item.text = `${icon} ${state.line}`;
-		// Click behavior: with reasoning control wired, clicking the status bar
-		// opens the end-reasoning picker in both phases: during TG the
-		// requesting stream is listed (it is registered once TG starts), during
-		// PP it is not registered yet, so the picker only offers any OTHER
-		// stream already in TG (or nothing, if there is none). Without it, the
+		// Click behavior follows the most recently started request: with
+		// reasoning control wired, clicking the status bar opens the
+		// end-reasoning picker in both phases: during TG the requesting
+		// stream is listed (it is registered once TG starts), during PP it is
+		// not registered yet, so the picker only offers any OTHER stream
+		// already in TG (or nothing, if there is none). Without it, the
 		// default command (open configuration UI) applies.
-		this.item.command = this._reasoningControl ? END_REASONING_COMMAND : this.defaultCommand;
-		// Tooltip: write the PP cache snapshot exactly once per request (even
-		// if the first flush already carries a TG state, i.e. PP and TG
-		// arrived within the same throttle window). Subsequent flushes leave
-		// it untouched. With reasoning control wired, the click hint is
-		// appended so the hint is visible from the PP phase on.
-		if (this._tooltipDetail !== undefined) {
-			this.item.tooltip = this._reasoningControl
-				? `${this._tooltipDetail}\nClick To End Reasoning`
-				: this._tooltipDetail;
-			this._tooltipDetail = undefined;
+		this.item.command = latest.reasoningControl ? END_REASONING_COMMAND : this.defaultCommand;
+		const req = this.renderedRequest();
+		if (req) {
+			const state = req.state as LlamaSpeedState;
+			const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
+			this.item.backgroundColor = undefined;
+			this.item.text = `${icon} ${state.line}`;
+			// Tooltip: write the rendered request's first PP cache snapshot
+			// exactly once (even if the first flush already carries a TG
+			// state, i.e. PP and TG arrived within the same throttle window).
+			// When the display falls back to an earlier request after the
+			// latest one ended, that request's snapshot is written then. With
+			// reasoning control wired, the click hint is appended so the hint
+			// is visible from the PP phase on.
+			if (req.tooltipDetail !== undefined && this._tooltipShownFor !== req.id) {
+				this.item.tooltip = latest.reasoningControl
+					? `${req.tooltipDetail}\nClick To End Reasoning`
+					: req.tooltipDetail;
+				this._tooltipShownFor = req.id;
+			}
 		}
 		this._lastWrite = Date.now();
 	}
 
 	dispose(): void {
-		this._active = 0;
+		this._requests.length = 0;
 		this.cancelPending();
 	}
 }

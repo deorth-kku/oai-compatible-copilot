@@ -739,8 +739,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (!response.body) {
 					throw new Error("No response body from OAI Compatible API");
 				}
+				const speedId = this.llamaSpeed.begin(reasoningControlWired);
 				openaiApi.onSpeedUpdate = (state) => {
-					this.llamaSpeed.update(state);
+					this.llamaSpeed.update(speedId, state);
 					// Register the stream for reasoning control only once TG has
 					// started: the TG state arrives with the first generated
 					// token (timings.predicted_n >= 1), always after the id
@@ -762,7 +763,6 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						});
 					}
 				};
-				this.llamaSpeed.begin(reasoningControlWired);
 				try {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 					// Experimental llama.cpp disk KV cache post-processing.
@@ -823,7 +823,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					if (completionId) {
 						this.reasoningControl.deactivate(completionId);
 					}
-					this.llamaSpeed.end();
+					this.llamaSpeed.end(speedId);
 					// Streaming overwrote the token usage display; refresh it now that
 					// the request is done (server usage first, history count fallback).
 					this.refreshTokenDisplay(openaiApi, requestMessages, options.tools, model, modelConfig);
