@@ -228,10 +228,12 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Per-conversation id derived from the request history. VS Code only
 	 * round-trips plain text content (any extra data-parts are dropped — a VS Code
 	 * bug), so we cannot carry a random session id forward. Instead we derive the
-	 * id from the *original* (pre-sanitize) system prompt, which Copilot seeds
-	 * with a per-session UUID (the VSCODE_TARGET_SESSION_LOG line), so it is
-	 * unique per session and stable across turns of the same session. This scopes
-	 * the reasoning cache so sessions don't leak into each other ("串台").
+	 * id from the value of the per-session `VSCODE_TARGET_SESSION_LOG` line that
+	 * Copilot seeds into the *original* (pre-sanitize) system prompt, so it is
+	 * unique per session and stable across turns of the same session — even when
+	 * the rest of the system prompt changes (skills, AGENTS.md attachments,
+	 * template variables). This scopes the reasoning cache so sessions don't leak
+	 * into each other ("串台").
 	 */
 	protected _convId = "";
 
@@ -242,9 +244,9 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * across turns of the same conversation without any round-tripped state.
 	 *
 	 * IMPORTANT: pass the *original* messages (before any sanitization such as
-	 * splitting the system prompt), otherwise the per-session UUID line
-	 * (VSCODE_TARGET_SESSION_LOG) is no longer in the first system message and
-	 * the id would collide across sessions.
+	 * splitting the system prompt), otherwise the VSCODE_TARGET_SESSION_LOG line
+	 * is no longer in the first system message and the id would collide across
+	 * sessions.
 	 */
 	setConvIdFromMessages(messages: readonly LanguageModelChatRequestMessage[]): void {
 		this._convId = CommonApi.computeConvId(messages);
@@ -262,17 +264,20 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	/**
 	 * Stable conversation id derived from the request history.
 	 *
-	 * Preferred: the first non-empty **system**-role message. Copilot injects a
-	 * per-session UUID into the system prompt (the VSCODE_TARGET_SESSION_LOG
-	 * line), so it is unique per session and stable across that session's turns.
+	 * Preferred: the value of the `VSCODE_TARGET_SESSION_LOG` line in the first
+	 * non-empty **system**-role message. Copilot seeds the system prompt with
+	 * this per-session path (ending in the session's UUID). Hashing just the
+	 * value — not the whole prompt — keeps the id stable when the rest of the
+	 * system prompt changes (skills, agents, AGENTS.md attachments, template
+	 * variables), which would otherwise bust the reasoning cache.
 	 *
-	 * Fallback (when there is no system message): the **second** user message —
-	 * the user's actual prompt — which is stable for a conversation and differs
+	 * Fallback (when the line is absent): the **second** user message — the
+	 * user's actual prompt — which is stable for a conversation and differs
 	 * between them; then the first user message; then a structural signature so
 	 * distinct histories still get distinct ids.
 	 */
 	private static computeConvId(messages: readonly LanguageModelChatRequestMessage[]): string {
-		let systemText = "";
+		let sessionLogValue: string | null = null;
 		let userCount = 0;
 		let firstUserText = "";
 		let secondUserText = "";
@@ -290,8 +295,18 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			// while the runtime System role is 3).
 			switch (mapRole(m)) {
 				case "system":
-					if (!systemText) {
-						systemText = text;
+					if (sessionLogValue === null) {
+						// The line looks like
+						// `- VSCODE_TARGET_SESSION_LOG: /path/.../<uuid>` (linux) or
+						// `- VSCODE_TARGET_SESSION_LOG: c:\Users\...\debug-logs\<uuid>`
+						// (windows). The value is the rest of the line — a path that
+						// may itself contain spaces (e.g. a user profile directory),
+						// so capture to the end of the line and trim, rather than
+						// stopping at the first whitespace.
+						const match = text.match(/VSCODE_TARGET_SESSION_LOG:[ \t]*([^\r\n]+)/);
+						if (match) {
+							sessionLogValue = match[1].trim();
+						}
 					}
 					break;
 				case "user":
@@ -308,9 +323,11 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 					break;
 			}
 		}
-		// Preferred: the system prompt (per-session UUID makes it unique per session).
-		if (systemText) {
-			return CommonApi.hashString(systemText);
+		// Preferred: the per-session VSCODE_TARGET_SESSION_LOG value (unique per
+		// session, stable across turns, and immune to the rest of the system
+		// prompt changing — skills, AGENTS.md, template variables).
+		if (sessionLogValue !== null) {
+			return CommonApi.hashString(sessionLogValue);
 		}
 		// Fallback: the user's real prompt (second user message), then the first
 		// (injected) user message, then a structural signature so distinct

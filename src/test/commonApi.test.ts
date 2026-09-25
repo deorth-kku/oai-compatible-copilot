@@ -88,12 +88,68 @@ suite("CommonApi.computeConvId", () => {
 		assert.notStrictEqual(a, b);
 	});
 
-	test("system prompt hash takes priority over the second user turn", () => {
+	test("session log value takes priority over the second user turn", () => {
 		// Two histories share the same first two user turns but differ in the
-		// system prompt → must differ (system prompt wins).
+		// VSCODE_TARGET_SESSION_LOG value → must differ (session log wins).
+		const a = convIdOf([
+			sys("system A\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111"),
+			user("u1"),
+			user("u2"),
+		]);
+		const b = convIdOf([
+			sys("system B\n- VSCODE_TARGET_SESSION_LOG: /x/bbbb-2222"),
+			user("u1"),
+			user("u2"),
+		]);
+		assert.notStrictEqual(a, b);
+	});
+
+	test("same session log value, different rest of system prompt → same convId", () => {
+		// The rest of the system prompt (skills, AGENTS.md attachments, template
+		// variables) varies between turns → the id must stay stable.
+		const a = convIdOf([sys("system A\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111"), user("u1")]);
+		const b = convIdOf([
+			sys("system B with skills and agents\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111"),
+			user("u1"),
+		]);
+		assert.strictEqual(a, b);
+	});
+
+	test("system message without a session log line → falls back to the second user turn", () => {
+		// The system prompt no longer participates in the id; only the session
+		// log value does.
 		const a = convIdOf([sys("system A"), user("u1"), user("u2")]);
 		const b = convIdOf([sys("system B"), user("u1"), user("u2")]);
+		assert.strictEqual(a, b);
+		// Different second user turn → different.
+		const c = convIdOf([sys("system A"), user("u1"), user("u3")]);
+		assert.notStrictEqual(a, c);
+	});
+
+	test("windows-style path (backslashes, colons) is captured whole", () => {
+		const win =
+			"c:\\Users\\testuser\\AppData\\Roaming\\Code\\User\\workspaceStorage\\w1234\\GitHub.copilot-chat\\debug-logs\\11112222-3333-4444-5555-666677778888";
+		const a = convIdOf([sys(`prompt\n- VSCODE_TARGET_SESSION_LOG: ${win}`), user("u1")]);
+		const b = convIdOf([sys(`prompt\n- VSCODE_TARGET_SESSION_LOG: ${win}`), user("u2")]);
+		assert.strictEqual(a, b);
+		// A different session (different UUID) under the same layout → different.
+		const c = convIdOf([sys(`prompt\n- VSCODE_TARGET_SESSION_LOG: ${win.replace("11112222", "99998888")}`), user("u1")]);
+		assert.notStrictEqual(a, c);
+	});
+
+	test("path containing a space is captured whole (not truncated at the space)", () => {
+		// e.g. C:\Users\John Doe\... — truncating at the space would drop the
+		// trailing UUID and make all sessions of the same user collide.
+		const base = "c:\\Users\\John Doe\\AppData\\Roaming\\Code\\User\\workspaceStorage\\w1\\GitHub.copilot-chat\\debug-logs";
+		const a = convIdOf([sys(`p\n- VSCODE_TARGET_SESSION_LOG: ${base}\\aaaa-1111`), user("u1")]);
+		const b = convIdOf([sys(`p\n- VSCODE_TARGET_SESSION_LOG: ${base}\\bbbb-2222`), user("u1")]);
 		assert.notStrictEqual(a, b);
+	});
+
+	test("CRLF line endings and trailing spaces do not leak into the captured value", () => {
+		const a = convIdOf([sys("p\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111\nnext line"), user("u1")]);
+		const b = convIdOf([sys("p\r\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111  \r\nnext line"), user("u1")]);
+		assert.strictEqual(a, b);
 	});
 
 	test("no system message → falls back to the second user turn (unchanged behavior)", () => {

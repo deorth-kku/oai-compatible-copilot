@@ -371,12 +371,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const statefulModelId = parsedModelId.baseId;
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text
-				// content, so we can't carry a random id). We hash the *original*
-				// system prompt, which embeds a per-session UUID, so it is unique
-				// per session. This must use the pre-split `messages` — the
-				// VSCODE_TARGET_SESSION_LOG line moves out of the first system
-				// message in `requestMessages`, which would make the id collide
-				// across sessions.
+				// content, so we can't carry a random id). We extract the value of
+				// the per-session VSCODE_TARGET_SESSION_LOG line from the *original*
+				// system prompt, so the id is unique per session and stays stable
+				// when the rest of the system prompt changes. This must use the
+				// pre-split `messages` — the VSCODE_TARGET_SESSION_LOG line moves
+				// out of the first system message in `requestMessages`, which would
+				// make the id collide across sessions.
 				openaiResponsesApi.setConvIdFromMessages(messages);
 
 					// Convert full history once (also extracts system `instructions`).
@@ -582,12 +583,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}
 				// Derive the conversation id from the request history so the reasoning
 				// cache is scoped per conversation (VS Code only round-trips text
-				// content, so we can't carry a random id). We hash the *original*
-				// system prompt, which embeds a per-session UUID, so it is unique
-				// per session. This must use the pre-split `messages` — the
-				// VSCODE_TARGET_SESSION_LOG line moves out of the first system
-				// message in `requestMessages`, which would make the id collide
-				// across sessions.
+				// content, so we can't carry a random id). We extract the value of
+				// the per-session VSCODE_TARGET_SESSION_LOG line from the *original*
+				// system prompt, so the id is unique per session and stays stable
+				// when the rest of the system prompt changes. This must use the
+				// pre-split `messages` — the VSCODE_TARGET_SESSION_LOG line moves
+				// out of the first system message in `requestMessages`, which would
+				// make the id collide across sessions.
 				openaiApi.setConvIdFromMessages(messages);
 				const openaiMessages = openaiApi.convertMessages(requestMessages, modelConfig);
 
