@@ -1087,8 +1087,13 @@ function populateModelIdDropdown(models) {
 			} else if (Array.isArray(model.supported_parameters)) {
 				modelOptimizationInput.value = "openrouter";
 			}
-			// Auto-fill supported_efforts from OpenRouter reasoning metadata (Feature 2)
-			setSupportedEfforts(model.reasoning && model.reasoning.supported_efforts);
+			// Auto-fill supported_efforts from OpenRouter reasoning metadata (Feature 2).
+			// Only overwrite when the fetched model actually declares supported_efforts,
+			// so a model without this metadata doesn't wipe manually checked values.
+			const fetchedSupportedEfforts = model.reasoning && model.reasoning.supported_efforts;
+			if (Array.isArray(fetchedSupportedEfforts)) {
+				setSupportedEfforts(fetchedSupportedEfforts);
+			}
 			// Auto-fill default reasoning effort from OpenRouter reasoning.default_effort (Feature 3)
 			if (model.reasoning && typeof model.reasoning.default_effort === "string") {
 				modelReasoningEffortInput.value = model.reasoning.default_effort;
