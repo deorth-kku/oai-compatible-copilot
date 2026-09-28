@@ -3,10 +3,10 @@
  *
  * llama.cpp servers can persist a slot's prompt cache to disk
  * (`--slot-save-path`) and restore it later (see the `/slots` endpoint docs).
- * When the identifying request parameters (model, reasoning effort, sanitized
- * system prompt, tools) are unchanged across *new* sessions, the prefix KV
- * cache can be restored into an idle slot before the first request, avoiding a
- * full prompt re-prefill.
+ * When the identifying request parameters (model, reasoning effort — unless
+ * `includeReasoning` is off — sanitized system prompt, tools) are unchanged
+ * across *new* sessions, the prefix KV cache can be restored into an idle
+ * slot before the first request, avoiding a full prompt re-prefill.
  *
  * Session-aware flow (see provider.ts and {@link decideSlotCache}):
  *   0. The provider decides `(restore, save)` per request from a matrix over
@@ -83,7 +83,11 @@ export function getServerRootUrl(baseUrl: string): string {
 export interface SlotCacheIdParts {
 	/** Model base id (WITHOUT configId). */
 	model: string;
-	/** The `reasoning_effort` value actually sent ("" when absent). */
+	/**
+	 * The `reasoning_effort` value actually sent ("" when absent). Excluded
+	 * from the digest when `computeSlotCacheId` is called with
+	 * `includeReasoning: false`.
+	 */
 	reasoning: string;
 	/** Sanitized system prompt text ("" when absent). */
 	system: string;
@@ -97,18 +101,31 @@ export interface SlotCacheIdParts {
  * Compute the disk KV cache file id for a request: the sha256 hex digest of
  * the canonical JSON of the identifying parts. The digest is filesystem-safe
  * (hex) and is used as `{digest}.bin` in the server's `--slot-save-path`.
+ *
+ * `options.includeReasoning` (default `true`) controls whether the
+ * `reasoning_effort` part participates in the digest. Some models' reasoning
+ * effort does not change the KV cache prefix; for those the caller passes
+ * `false` so switching the effort reuses the same cache file. When `true`
+ * (the default) the payload is byte-identical to the pre-option digest, so
+ * existing `.bin` files keep matching.
  */
-export function computeSlotCacheId(parts: SlotCacheIdParts): string {
-	const payload = JSON.stringify({
-		model: parts.model,
-		reasoning: parts.reasoning,
-		system: parts.system,
-		tools: parts.tools ?? [],
-		toolChoice: parts.toolChoice ?? "auto",
-	});
-	const digest = createHash("sha256").update(payload).digest("hex");
+export function computeSlotCacheId(
+	parts: SlotCacheIdParts,
+	options?: { includeReasoning?: boolean }
+): string {
+	// Key order (model, reasoning, system, tools, toolChoice) is part of the
+	// digest contract — do not reorder.
+	const payload: Record<string, unknown> = { model: parts.model };
+	if (options?.includeReasoning !== false) {
+		payload.reasoning = parts.reasoning;
+	}
+	payload.system = parts.system;
+	payload.tools = parts.tools ?? [];
+	payload.toolChoice = parts.toolChoice ?? "auto";
+	const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 	logger.debug("llamaSlotCache.cacheId", {
 		reasoning_effort: parts.reasoning,
+		include_reasoning: options?.includeReasoning !== false,
 		model_id: parts.model,
 		system_prompt_len: parts.system.length,
 		tools_count: Array.isArray(parts.tools) ? parts.tools.length : 0,

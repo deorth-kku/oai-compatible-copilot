@@ -484,6 +484,19 @@
 											placeholder="300000"
 										/>
 									</div>
+									<div class="field" id="modelCacheIdIncludeReasoningField">
+										<label for="modelCacheIdIncludeReasoning">Cache ID Includes Reasoning Effort</label>
+										<div class="field-description">
+											Include the reasoning effort in the disk KV cache id. Set to False for models whose
+											reasoning effort does not change the KV cache prefix, so switching the effort reuses
+											the same cache file. Default: True.
+										</div>
+										<select id="modelCacheIdIncludeReasoning" class="model-input">
+											<option value="">Default (True)</option>
+											<option value="true">True</option>
+											<option value="false">False</option>
+										</select>
+									</div>
 									<div class="field" id="modelSplitSystemPromptField">
 										<label for="modelSplitSystemPrompt">Split System Prompt (experimental)</label>
 										<div class="field-description">

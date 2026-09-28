@@ -63,6 +63,8 @@ const modelDiskKvCacheInput = document.getElementById("modelDiskKvCache");
 const modelDiskKvCacheField = document.getElementById("modelDiskKvCacheField");
 const modelLlamaSlotTimeoutInput = document.getElementById("modelLlamaSlotTimeout");
 const modelLlamaSlotTimeoutField = document.getElementById("modelLlamaSlotTimeoutField");
+const modelCacheIdIncludeReasoningInput = document.getElementById("modelCacheIdIncludeReasoning");
+const modelCacheIdIncludeReasoningField = document.getElementById("modelCacheIdIncludeReasoningField");
 const modelSplitSystemPromptInput = document.getElementById("modelSplitSystemPrompt");
 const modelSplitSystemPromptField = document.getElementById("modelSplitSystemPromptField");
 const modelReasoningControlInput = document.getElementById("modelReasoningControl");
@@ -572,6 +574,7 @@ function resetModelForm() {
 	modelReasoningExcludeInput.value = "";
 	modelDiskKvCacheInput.value = "";
 	modelLlamaSlotTimeoutInput.value = "";
+	modelCacheIdIncludeReasoningInput.value = "";
 	modelSplitSystemPromptInput.value = "";
 	modelReasoningControlInput.value = "";
 	uncheckSupportedEfforts();
@@ -632,6 +635,8 @@ function collectModelFormData() {
 			: undefined,
 		disk_kv_cache: modelDiskKvCacheInput.value ? modelDiskKvCacheInput.value === "true" : undefined,
 		llama_slot_timeout: modelLlamaSlotTimeoutInput.value ? parseInt(modelLlamaSlotTimeoutInput.value) : undefined,
+		cache_id_include_reasoning:
+			modelCacheIdIncludeReasoningInput.value ? modelCacheIdIncludeReasoningInput.value === "true" : undefined,
 		split_system_prompt: modelSplitSystemPromptInput.value ? modelSplitSystemPromptInput.value === "true" : undefined,
 		reasoning_control: modelReasoningControlInput.value ? modelReasoningControlInput.value === "true" : undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
@@ -720,13 +725,15 @@ function syncReasoningEffortOptions() {
 
 // Show/hide the backend-specific fields based on the selected optimization
 // type: "Reasoning Exclude" is OpenRouter-only; disk cache, slot timeout,
-// system prompt splitting, and reasoning control are llama.cpp-only.
+// cache-id reasoning inclusion, system prompt splitting, and reasoning
+// control are llama.cpp-only.
 function updateOptimizationVisibility() {
 	const isOpenRouter = modelOptimizationInput.value === "openrouter";
 	modelReasoningExcludeField.style.display = isOpenRouter ? "" : "none";
 	const isLlamaCpp = modelOptimizationInput.value === "llama.cpp";
 	modelDiskKvCacheField.style.display = isLlamaCpp ? "" : "none";
 	modelLlamaSlotTimeoutField.style.display = isLlamaCpp ? "" : "none";
+	modelCacheIdIncludeReasoningField.style.display = isLlamaCpp ? "" : "none";
 	modelSplitSystemPromptField.style.display = isLlamaCpp ? "" : "none";
 	modelReasoningControlField.style.display = isLlamaCpp ? "" : "none";
 }
@@ -1228,6 +1235,8 @@ function populateModelForm(model) {
 	modelOptimizationInput.value = model.optimization || "";
 	modelDiskKvCacheInput.value = model.disk_kv_cache !== undefined ? String(model.disk_kv_cache) : "";
 	modelLlamaSlotTimeoutInput.value = model.llama_slot_timeout || "";
+	modelCacheIdIncludeReasoningInput.value =
+		model.cache_id_include_reasoning !== undefined ? String(model.cache_id_include_reasoning) : "";
 	modelSplitSystemPromptInput.value = model.split_system_prompt !== undefined ? String(model.split_system_prompt) : "";
 	modelReasoningControlInput.value = model.reasoning_control !== undefined ? String(model.reasoning_control) : "";
 	setSupportedEfforts(model.supported_efforts);

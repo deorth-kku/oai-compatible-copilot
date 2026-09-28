@@ -75,6 +75,21 @@ suite("llamaSlotCache", () => {
 			);
 		});
 
+		test("includeReasoning false ignores the reasoning effort", () => {
+			assert.strictEqual(
+				computeSlotCacheId({ ...base, reasoning: "high" }, { includeReasoning: false }),
+				computeSlotCacheId(base, { includeReasoning: false })
+			);
+		});
+
+		test("includeReasoning false differs from the default (included) id", () => {
+			assert.notStrictEqual(computeSlotCacheId(base, { includeReasoning: false }), computeSlotCacheId(base));
+		});
+
+		test("includeReasoning true is identical to the default id", () => {
+			assert.strictEqual(computeSlotCacheId(base, { includeReasoning: true }), computeSlotCacheId(base));
+		});
+
 		test("changes when system prompt changes", () => {
 			assert.notStrictEqual(
 				computeSlotCacheId({ ...base, system: "You are a helpful assistant. (extra)" }),

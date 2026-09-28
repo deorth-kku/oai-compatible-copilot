@@ -628,13 +628,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				let slotRestoreRequested = false;
 				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true) {
 					const rootUrl = getServerRootUrl(BASE_URL);
-					const cacheId = computeSlotCacheId({
-						model: parsedModelId.baseId,
-						reasoning: typeof requestBody.reasoning_effort === "string" ? requestBody.reasoning_effort : "",
-						system: extractSystemText(openaiMessages),
-						tools: requestBody.tools,
-						toolChoice: requestBody.tool_choice,
-					});
+					const cacheId = computeSlotCacheId(
+						{
+							model: parsedModelId.baseId,
+							reasoning: typeof requestBody.reasoning_effort === "string" ? requestBody.reasoning_effort : "",
+							system: extractSystemText(openaiMessages),
+							tools: requestBody.tools,
+							toolChoice: requestBody.tool_choice,
+						},
+						// Default true: the digest includes reasoning_effort exactly
+						// as before this option existed.
+						{ includeReasoning: um.cache_id_include_reasoning !== false }
+					);
 					// Per-model /slots request timeout (default: 5 minutes).
 					const slotTimeoutMs =
 						typeof um.llama_slot_timeout === "number" && um.llama_slot_timeout > 0

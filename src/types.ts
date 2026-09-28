@@ -136,8 +136,9 @@ export interface HFModelItem {
 	 * `apiMode: "openai"`.
 	 *
 	 * The extension tracks, per conversation, a cache id computed from model
-	 * (base id) + reasoning effort + sanitized system prompt + tools, and
-	 * decides restore/save per request:
+	 * (base id) + reasoning effort (unless `cache_id_include_reasoning` is
+	 * `false`) + sanitized system prompt + tools, and decides restore/save
+	 * per request:
 	 * - first request of a new conversation (system + injected env + user
 	 *   message): restore `{cache_id}.bin` into an idle slot (via the server's
 	 *   `/slots` endpoint, which must be enabled — default; `--no-slots`
@@ -182,6 +183,21 @@ export interface HFModelItem {
 	 * lose to plain GPU prefill).
 	 */
 	llama_slot_timeout?: number;
+
+	/**
+	 * Whether the disk KV cache id includes the request's `reasoning_effort`.
+	 * Only effective with `optimization: "llama.cpp"` and
+	 * `disk_kv_cache: true`.
+	 *
+	 * Some models' reasoning effort does not change the KV cache prefix
+	 * (e.g. non-reasoning models, or models where the effort only affects
+	 * decoding); for those, set this to `false` so switching the effort
+	 * reuses the same `{cache_id}.bin` instead of missing and re-prefilling.
+	 *
+	 * Default is `true` (included — the digest is computed exactly as before
+	 * this option existed, so existing cache files keep matching).
+	 */
+	cache_id_include_reasoning?: boolean;
 
 	/**
 	 * EXPERIMENTAL: split the first system message at the first
