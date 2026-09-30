@@ -349,6 +349,18 @@ export interface TokenUsageDetails {
 export interface CompletionTokenUsageDetails {
 	reasoning_tokens?: number;
 	visible_tokens?: number;
+	/**
+	 * True when `reasoning_tokens` was estimated LOCALLY because the backend
+	 * reported no reasoning tokens at all despite streaming a reasoning trace.
+	 *
+	 * Some gateways (observed on OpenRouter) stream `reasoning` /
+	 * `reasoning_details` deltas but always report
+	 * `completion_tokens_details.reasoning_tokens: 0`, because the upstream
+	 * provider does not fill the field in. The extension counts the streamed
+	 * reasoning text itself in that case, so the status bar can still show
+	 * that reasoning happened and roughly how much of it there was.
+	 */
+	reasoning_tokens_estimated?: boolean;
 }
 
 /**

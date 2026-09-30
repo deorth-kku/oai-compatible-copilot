@@ -12,6 +12,7 @@ import { HFModelItem, CustomDataPartMimeTypes, TokenUsage } from "./types";
 import { tryParseJSONObject, mapRole } from "./utils";
 import { logger } from "./logger";
 import { VersionManager } from "./versionManager";
+import { tokenizerManager } from "./tokenizer/tokenizerManager";
 
 export abstract class CommonApi<TMessage, TRequestBody> {
 	/** Buffer for assembling streamed tool calls by index. */
@@ -213,6 +214,20 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * full trace).
 	 */
 	protected _turnReasoning = "";
+
+	/**
+	 * Snapshot of {@link _turnReasoning} taken when the turn is finalized.
+	 *
+	 * `endTurnCapture` clears `_turnReasoning` once the trace has been written
+	 * to the replay cache, but the local reasoning-token estimate is computed
+	 * AFTER that (in the `finally` block, from the finished turn's usage), so
+	 * it needs a copy that survives the reset. Cleared at the start of the next
+	 * turn by `beginReasoningCapture`.
+	 */
+	private _lastTurnReasoning = "";
+
+	/** Whether the tokenizer-based estimate failed and must not be attempted again. */
+	private _localReasoningEstimateFailed = false;
 
 	/**
 	 * The assistant parts (text + tool calls, in emit order) reported to VS Code
@@ -441,6 +456,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected beginReasoningCapture(): void {
 		this._turnReasoning = "";
+		this._lastTurnReasoning = "";
 		this._turnAssistantParts = [];
 	}
 
@@ -463,6 +479,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * across turns.
 	 */
 	protected endTurnCapture(): void {
+		// Snapshot before any early return: the estimate consumer runs later and
+		// must see the trace even for turns that are not cached (pure-thinking
+		// turns have no assistant parts to hash).
+		this._lastTurnReasoning = this._turnReasoning;
 		if (!this._turnReasoning.trim() || this._turnAssistantParts.length === 0) {
 			return;
 		}
@@ -856,8 +876,80 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	}
 
 	/**
+	 * Fill in a local reasoning-token estimate when the backend reported none.
+	 *
+	 * Some gateways stream a reasoning trace but leave
+	 * `completion_tokens_details.reasoning_tokens` at 0 (observed on
+	 * OpenRouter, whose upstream providers do not populate the field). Taken at
+	 * face value that renders as "Reasoning: 0" for a response that clearly
+	 * reasoned, and makes the derived visible-token count absorb the whole
+	 * completion.
+	 *
+	 * When that happens, count the reasoning text this turn actually streamed
+	 * and mark the value as an estimate. The server's number always wins when
+	 * it is non-zero, so a well-behaved backend is never overridden. Counting
+	 * uses the bundled o200k_base tokenizer, which is an approximation for
+	 * non-OpenAI models — hence the explicit `reasoning_tokens_estimated` flag
+	 * that the status bar renders as `~N (local)`.
+	 *
+	 * Call this from the adapter's stream-teardown path, after the final
+	 * thinking chunk has been flushed into {@link _lastTurnReasoning} and
+	 * before `reportUsage` serializes the usage into the data part. It is
+	 * deliberately NOT called from `reportUsage` itself, so adapters that do
+	 * not need it (and would otherwise pay an await) are untouched.
+	 *
+	 * Never throws: a tokenizer failure just leaves the usage unchanged.
+	 */
+	protected async reconcileReasoningUsage(): Promise<void> {
+		const usage = this._usage;
+		if (!usage || this._localReasoningEstimateFailed) {
+			return;
+		}
+		// Only the "backend reported nothing despite streaming reasoning" case
+		// is worth estimating; a real non-zero count is authoritative.
+		const reported = usage.completion_tokens_details?.reasoning_tokens;
+		if (typeof reported === "number" && reported > 0) {
+			return;
+		}
+		const text = this._lastTurnReasoning;
+		if (!text.trim()) {
+			// No reasoning was streamed, so 0 was accurate after all.
+			return;
+		}
+		try {
+			const count = await tokenizerManager.countTokens(text);
+			if (count > 0) {
+				usage.completion_tokens_details = {
+					...usage.completion_tokens_details,
+					reasoning_tokens: count,
+					reasoning_tokens_estimated: true,
+				};
+				logger.debug("usage.reasoningEstimated", {
+					modelId: this._modelId,
+					reasoningTokens: count,
+					completionTokens: usage.completion_tokens,
+				});
+			}
+		} catch (e) {
+			// The tokenizer needs the extension asset path; without it (or on any
+			// other failure) keep the server's number rather than guessing.
+			this._localReasoningEstimateFailed = true;
+			logger.debug("usage.reasoningEstimateFailed", {
+				modelId: this._modelId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+		}
+	}
+
+	/**
 	 * Report accumulated token usage as a LanguageModelDataPart so VS Code
 	 * can display usage stats in the Context Window widget.
+	 *
+	 * Stays SYNCHRONOUS on purpose: changing this to async would force an
+	 * `await` at every call site in every provider adapter, for a fix that only
+	 * concerns the OpenAI-compatible path (see {@link reconcileReasoningUsage}).
+	 * Adapters that want the local estimate await it themselves before calling
+	 * this.
 	 */
 	protected reportUsage(progress: Progress<LanguageModelResponsePart2>): void {
 		if (!this._usage) {

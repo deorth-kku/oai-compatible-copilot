@@ -115,7 +115,12 @@ export function formatOpenRouterUsageReport(usage: TokenUsage): string | undefin
 		const reasoning = num(completionDetails.reasoning_tokens);
 		const visible = num(completionDetails.visible_tokens);
 		if (reasoning !== undefined) {
-			detailParts.push(`Reasoning: ${reasoning}`);
+			// `~N (local)` marks a count the extension derived from the streamed
+			// reasoning text because the backend reported none — see
+			// CommonApi.reconcileReasoningUsage.
+			detailParts.push(
+				completionDetails.reasoning_tokens_estimated ? `Reasoning: ~${reasoning} (local)` : `Reasoning: ${reasoning}`
+			);
 		}
 		if (visible !== undefined) {
 			detailParts.push(`Visible: ${visible}`);

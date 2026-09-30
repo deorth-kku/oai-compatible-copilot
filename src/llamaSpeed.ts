@@ -160,7 +160,10 @@ export function formatLlamaUsageReport(usage: TokenUsage): string | undefined {
 		const reasoning = num(details.reasoning_tokens);
 		const visible = num(details.visible_tokens);
 		if (reasoning !== undefined) {
-			detailParts.push(`Reasoning: ${reasoning}`);
+			// `~N (local)` marks a count the extension derived from the streamed
+			// reasoning text because the backend reported none — see
+			// CommonApi.reconcileReasoningUsage.
+			detailParts.push(details.reasoning_tokens_estimated ? `Reasoning: ~${reasoning} (local)` : `Reasoning: ${reasoning}`);
 		}
 		if (visible !== undefined) {
 			detailParts.push(`Visible: ${visible}`);

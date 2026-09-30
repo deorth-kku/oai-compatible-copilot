@@ -519,6 +519,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			this.reportEndThinking(progress);
 			// Persist this turn's reasoning under its content hash.
 			this.endTurnCapture();
+			// Some backends on this path (OpenRouter gateways in particular)
+			// stream a reasoning trace but report reasoning_tokens: 0, because
+			// the upstream provider never fills the field. Estimate it from the
+			// trace we actually received, so the status bar and the Context
+			// Window widget do not claim "Reasoning: 0" for a response that
+			// clearly reasoned. Must run after endTurnCapture (which snapshots
+			// the trace) and before reportUsage (which serializes the usage).
+			await this.reconcileReasoningUsage();
 			// Report accumulated usage for the Context Window widget
 			this.reportUsage(progress);
 		}
