@@ -334,6 +334,12 @@ export const CustomDataPartMimeTypes = {
  */
 export interface TokenUsageDetails {
 	cached_tokens: number;
+	/**
+	 * Tokens written to the prompt cache on this request. Only reported by
+	 * providers with explicit cache-write accounting (e.g. OpenRouter); absent
+	 * on backends that do not bill cache writes separately.
+	 */
+	cache_write_tokens?: number;
 }
 
 /**
@@ -377,12 +383,44 @@ export interface LlamaTimings {
 }
 
 /**
+ * OpenRouter per-request router metadata.
+ *
+ * OpenRouter only emits this when the request opts in via the
+ * `X-OpenRouter-Metadata: enabled` request header, and even then it is
+ * absent on a response-cache replay (OpenRouter strips it from cache hits on
+ * purpose, so clients cannot pin behavior on stale routing data). It arrives
+ * as a SIBLING of `usage` in the final streamed chunk; the provider attaches
+ * it to the captured usage object.
+ */
+export interface OpenRouterMetadata {
+	/** The model slug (or alias) the client sent. */
+	requested?: string;
+	/** Routing strategy: `direct`, `auto`, `free`, `fallback`, ... */
+	strategy?: string;
+	/** Edge region that handled the request, when available. */
+	region?: string | null;
+	/** Human-readable one-liner describing the routing decision. */
+	summary?: string;
+	/** 1-indexed attempt that succeeded; > 1 means earlier attempts fell back. */
+	attempt?: number;
+	/** Whether the request used a Bring-Your-Own-Key provider key. */
+	is_byok?: boolean;
+	/**
+	 * Milliseconds from dispatching the upstream request until its response
+	 * body ended. Divide the completion token count by this for throughput.
+	 * Absent when no upstream request was dispatched.
+	 */
+	generation_time?: number;
+}
+
+/**
  * Standard OpenAI token usage structure.
  *
  * When pointed at a llama.cpp llama-server, the final chunk carries a
  * `timings` object (sibling of `usage`) with llama.cpp-specific timing and
  * cache stats; the provider attaches it to the captured usage object
- * (absent on other backends).
+ * (absent on other backends). Likewise `openrouter` carries OpenRouter's
+ * opt-in router metadata (also a sibling of `usage`).
  */
 export interface TokenUsage {
 	prompt_tokens: number;
@@ -392,4 +430,6 @@ export interface TokenUsage {
 	completion_tokens_details?: CompletionTokenUsageDetails;
 	// llama.cpp timing/cache stats, nested in a `timings` object
 	timings?: LlamaTimings;
+	// OpenRouter router/timing metadata, nested in an `openrouter` object
+	openrouter?: OpenRouterMetadata;
 }

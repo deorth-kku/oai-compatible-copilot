@@ -7,7 +7,13 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem, TokenUsage, LlamaTimings, ModelConversionConfig } from "../types";
+import type {
+	HFModelItem,
+	TokenUsage,
+	LlamaTimings,
+	OpenRouterMetadata,
+	ModelConversionConfig,
+} from "../types";
 import {
 	getConfiguredReasoningEffort,
 	getModelDefaultReasoningEffort,
@@ -464,8 +470,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 							// object so the status bar report can render it.
 							if (parsed.timings && typeof parsed.timings === "object") {
 								usage.timings = parsed.timings as LlamaTimings;
-							}
-							this._usage = usage;
+							}						// OpenRouter does the same with `openrouter_metadata` on the
+						// final chunk, but only when the request opted in via the
+						// `X-OpenRouter-Metadata: enabled` header.
+						if (parsed.openrouter_metadata && typeof parsed.openrouter_metadata === "object") {
+							usage.openrouter = parsed.openrouter_metadata as OpenRouterMetadata;
+						}							this._usage = usage;
 							logger.debug("usage.capture", { modelId: this._modelId, usage: this._usage });
 						}
 						// Capture the llama.cpp slot id from the `__verbose` field of the

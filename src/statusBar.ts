@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { countMessageTokens, countToolTokens } from "./provideToken";
 import { formatLlamaUsageReport } from "./llamaSpeed";
+import { formatOpenRouterUsageReport } from "./openrouterSpeed";
 import type { TokenUsage } from "./types";
 
 export function initStatusBar(context: vscode.ExtensionContext): vscode.StatusBarItem {
@@ -133,11 +134,17 @@ export function updateContextStatusBarFromUsage(
 	// timing/cache fields; render them as a report section when present.
 	const llamaReport = formatLlamaUsageReport(usage);
 	const llamaSection = llamaReport ? `  ── llama.cpp ──\n${llamaReport}\n` : "";
+	// OpenRouter backends report prompt-cache counters on every response and,
+	// with the router-metadata opt-in, the upstream wall time. Rendered as its
+	// own section so it never mixes with the llama.cpp one (a request is
+	// served by exactly one backend).
+	const openRouterReport = formatOpenRouterUsageReport(usage);
+	const openRouterSection = openRouterReport ? `  ── OpenRouter ──\n${openRouterReport}\n` : "";
 	statusBarItem.tooltip = `Token Usage: ${formatTokenCount(totalTokenCount)} / ${formatTokenCount(maxTokens)}\n
 ${progressBar}\n
   - Prompt: ${formatTokenCount(promptTokens)}  (${Math.min((promptTokens / maxTokens) * 100, 100).toFixed(1)}%)
   - Completion: ${formatTokenCount(completionTokens)}  (${Math.min((completionTokens / maxTokens) * 100, 100).toFixed(1)}%) \n
-${llamaSection}Click to Open Configuration UI`;
+${llamaSection}${openRouterSection}Click to Open Configuration UI`;
 
 	applyUsageColoring(statusBarItem, totalTokenCount, maxTokens);
 

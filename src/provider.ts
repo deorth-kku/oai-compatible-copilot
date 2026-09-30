@@ -271,6 +271,14 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// prepare headers with custom headers if specified
 			const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
+			// OpenRouter opt-in: surface per-request router metadata (upstream
+			// wall time, routing decision) on the final streamed chunk so the
+			// status bar tooltip can render its report section. Off by default
+			// because it is OpenRouter-specific, and stripped by OpenRouter on
+			// response-cache replays anyway. A user-provided header wins.
+			if (um?.optimization === "openrouter" && requestHeaders["X-OpenRouter-Metadata"] === undefined) {
+				requestHeaders["X-OpenRouter-Metadata"] = "enabled";
+			}
 			logger.debug("request.headers", {
 				headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
 			});
