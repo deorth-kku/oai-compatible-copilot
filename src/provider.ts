@@ -782,6 +782,24 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 								actual: actualSlot,
 							});
 						}
+						if (slotRestored) {
+							// The disk cache was restored, yet the server reports
+							// zero cache hits for this request (same source the
+							// llama speed usage report reads): the restored KV
+							// was not actually reused.
+							const usage = openaiApi.getUsage();
+							const promptTokens = usage?.prompt_tokens;
+							const cached = usage?.prompt_tokens_details?.cached_tokens ?? usage?.timings?.cache_n;
+							if (typeof promptTokens === "number" && promptTokens > 0 && cached === 0) {
+								logger.warn("llamaSlotCache.restoreNoCacheHit", {
+									slotId: pinnedSlot,
+									filename: slotCache.filename,
+									promptTokens,
+									cacheSource: usage?.timings?.cache_source,
+									cacheReason: usage?.timings?.cache_reason,
+								});
+							}
+						}
 						// The matrix's save flag is a NECESSARY condition only: a
 						// restore must have been ATTEMPTED and missed — a successful
 						// restore already has the .bin on disk, and NOT attempting a
