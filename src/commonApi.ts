@@ -354,9 +354,13 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	/**
 	 * Normalize an ordered part sequence into content fragments: consecutive
 	 * text parts are merged and trimmed into `T<text>` fragments; tool calls
-	 * become `C<name>~<canonicalJson(input)>` fragments. Thinking, data and
+	 * become `C<name>~<id>~<canonicalJson(input)>` fragments. Thinking, data and
 	 * tool-result parts are excluded — thinking is what the cache is meant to
 	 * recover, and data parts are opaque blobs that may be dropped on rebuild.
+	 *
+	 * The tool-call `id` is included because the host round-trips it stably
+	 * into history, so it disambiguates two calls that share a name and
+	 * arguments (e.g. the same tool invoked twice in one turn).
 	 *
 	 * Merging consecutive text (and trimming each merged segment) makes the hash
 	 * insensitive to how VS Code splits/merges text parts when it round-trips
@@ -376,7 +380,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 					frags.push(`T${text}`);
 				}
 				buf = "";
-				frags.push(`C${part.name}~${CommonApi.canonicalJson(part.input ?? {})}`);
+				frags.push(`C${part.name}~${part.callId}~${CommonApi.canonicalJson(part.input ?? {})}`);
 			}
 		}
 		const text = buf.trim();

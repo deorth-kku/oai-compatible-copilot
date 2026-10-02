@@ -94,8 +94,9 @@ suite("reasoningCache content hash", () => {
 	const text = (value: string): vscode.LanguageModelTextPart => new vscode.LanguageModelTextPart(value);
 	const tool = (
 		name: string,
-		input: Record<string, unknown>
-	): vscode.LanguageModelToolCallPart => new vscode.LanguageModelToolCallPart("call_1", name, input);
+		input: Record<string, unknown>,
+		id = "call_1"
+	): vscode.LanguageModelToolCallPart => new vscode.LanguageModelToolCallPart(id, name, input);
 	const thinking = (value: string): vscode.LanguageModelThinkingPart => new vscode.LanguageModelThinkingPart(value);
 
 	/**
@@ -173,6 +174,12 @@ suite("reasoningCache content hash", () => {
 		const a = CommonApi.computeTurnHashFromParts([tool("read_file", { path: "a.ts", startLine: 1 })]);
 		const b = CommonApi.computeTurnHashFromParts([tool("read_file", { startLine: 1, path: "a.ts" })]);
 		assert.strictEqual(a, b);
+	});
+
+	test("tool call id changes the hash (same name + args, different id)", () => {
+		const a = CommonApi.computeTurnHashFromParts([tool("read_file", { path: "a.ts" }, "call_a")]);
+		const b = CommonApi.computeTurnHashFromParts([tool("read_file", { path: "a.ts" }, "call_b")]);
+		assert.notStrictEqual(a, b);
 	});
 
 	test("thinking parts are excluded from the hash", () => {
