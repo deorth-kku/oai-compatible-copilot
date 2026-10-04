@@ -65,11 +65,23 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 * registration early instead of waiting for the stream to finish.
 	 */	onReasoningEnd?: () => void;
 
+	/**
+	 * Optional callback fired exactly once when the FIRST streamed SSE data
+	 * chunk has been parsed. By then the backend is definitely processing the
+	 * request — for llama.cpp the assigned slot is occupied and no longer
+	 * selectable as idle — so the provider uses it to release the disk-KV slot
+	 * lock (see `HuggingFaceChatModelProvider`).
+	 */
+	onFirstChunk?: () => void;
+
 	/** The completion id captured from the first streamed response object. */
 	private _completionId: string | undefined;
 
 	/** Guards `onReasoningEnd` so it fires exactly once per stream. */
 	private _reasoningEndFired = false;
+
+	/** Guards `onFirstChunk` so it fires exactly once per stream. */
+	private _firstChunkFired = false;
 
 	/** The completion id captured from the stream (undefined until received). */
 	getCompletionId(): string | undefined {
@@ -415,6 +427,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		this._completionId = undefined;
 		this._llamaIdSlot = undefined;
 		this._reasoningEndFired = false;
+		this._firstChunkFired = false;
 		logger.debug("openai.stream.start", { modelId });
 
 		const reader = responseBody.getReader();
@@ -450,6 +463,18 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
 					try {
 						const parsed = JSON.parse(data);
+						if (!this._firstChunkFired) {
+							this._firstChunkFired = true;
+							try {
+								this.onFirstChunk?.();
+							} catch (e) {
+								console.error("[OpenAI Provider] First chunk callback failed:", e);
+								logger.error("openai.stream.firstChunkCallback.error", {
+									modelId,
+									error: e instanceof Error ? e.message : String(e),
+								});
+							}
+						}
 						if (!this._completionId && typeof parsed.id === "string" && parsed.id.trim().length > 0) {
 							this._completionId = parsed.id;
 							try {

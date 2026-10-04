@@ -14,7 +14,14 @@ import type { HFModelItem, ModelConversionConfig } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
-import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels, sanitizeMessages } from "./utils";
+import {
+	parseModelId,
+	createRetryConfig,
+	executeWithRetry,
+	normalizeUserModels,
+	sanitizeMessages,
+	AsyncMutex,
+} from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
@@ -77,6 +84,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	private readonly _geminiToolCallMetaByCallId = new Map<string, GeminiToolCallMeta>();
 	private readonly _openaiResponsesPreviousResponseIdUnsupportedBaseUrls = new Set<string>();
 
+	/**
+	 * Per-(server root URL, model base id) mutexes serializing the llama.cpp
+	 * disk-KV slot acquisition phase: `GET /slots` + restore + request start
+	 * (held until the first SSE chunk, when the server-side slot is occupied
+	 * and no longer selectable as idle). Without the lock, two concurrent
+	 * requests can select the SAME idle slot, both restore the disk cache
+	 * into it, and both pin it via `id_slot`.
+	 */
+	private readonly _llamaSlotLocks = new Map<string, AsyncMutex>();
+
 	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot.stateful-marker";
 
 	/**
@@ -97,6 +114,23 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		if (globalState) {
 			CommonApi.setMemento(globalState);
 		}
+	}
+
+	/**
+	 * Acquire the disk-KV slot lock for a (server, model) pair. Concurrent
+	 * requests to the SAME server+model serialize their slot acquisition;
+	 * requests to other servers/models proceed in parallel.
+	 *
+	 * @returns A promise resolving to the release function (call exactly once).
+	 */
+	private acquireLlamaSlotLock(rootUrl: string, modelId: string): Promise<() => void> {
+		const key = `${rootUrl}|${modelId}`;
+		let mutex = this._llamaSlotLocks.get(key);
+		if (!mutex) {
+			mutex = new AsyncMutex();
+			this._llamaSlotLocks.set(key, mutex);
+		}
+		return mutex.acquire();
 	}
 
 	/**
@@ -165,6 +199,21 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		const _cancelSubscription = token.onCancellationRequested(() => {
 			abortController.abort();
 		});
+		// Release function for the llama.cpp disk-KV slot lock (acquired in the
+		// OpenAI-mode gated block below). Invoked exactly once, from whichever
+		// of these fires first:
+		//   - the first SSE chunk (the server-side slot is then occupied and
+		//     no longer selectable as idle by a concurrent request),
+		//   - stream completion without any parsed chunk (empty stream),
+		//   - any failure before the first chunk (fetch/retry error, missing
+		//     body, stream error, user cancellation).
+		let releaseSlotLock: (() => void) | undefined;
+		const releaseSlotLockOnce = () => {
+			if (releaseSlotLock) {
+				releaseSlotLock();
+				releaseSlotLock = undefined;
+			}
+		};
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
@@ -636,6 +685,14 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				let slotRestoreRequested = false;
 				if (um?.optimization === "llama.cpp" && um?.disk_kv_cache === true) {
 					const rootUrl = getServerRootUrl(BASE_URL);
+					// Serialize slot acquisition per (server, model): two
+					// concurrent requests must not both select the same idle
+					// slot, both restore into it, and both pin it. The lock is
+					// held until the first SSE chunk (the slot is then occupied
+					// server-side and no longer idle) or the request fails —
+					// see `releaseSlotLockOnce` above.
+					releaseSlotLock = await this.acquireLlamaSlotLock(rootUrl, parsedModelId.baseId);
+					openaiApi.onFirstChunk = releaseSlotLockOnce;
 					const cacheId = computeSlotCacheId(
 						{
 							model: parsedModelId.baseId,
@@ -780,6 +837,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				};
 				try {
 					await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
+					// The stream ended without a single parsed chunk (empty
+					// stream): the first-chunk hook never fired, so release the
+					// slot lock now. No-op when the first chunk already did.
+					releaseSlotLockOnce();
 					// Experimental llama.cpp disk KV cache post-processing.
 					if (slotCache) {
 						const actualSlot = openaiApi.getLlamaIdSlot();
@@ -868,6 +929,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}
 			}
 		} catch (err) {
+			// The request failed before (or without) a first SSE chunk: release
+			// the disk-KV slot lock so concurrent requests are not blocked.
+			// No-op when the first chunk already released it.
+			releaseSlotLockOnce();
 			console.error("[OAI Compatible Model Provider] Chat request failed", {
 				modelId: model.id,
 				messageCount: messages.length,

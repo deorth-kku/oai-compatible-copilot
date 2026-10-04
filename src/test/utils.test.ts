@@ -1,6 +1,6 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { normalizeUserModels, sanitizeMessages, stripReminderInstructions } from "../utils";
+import { normalizeUserModels, sanitizeMessages, stripReminderInstructions, AsyncMutex } from "../utils";
 import type { HFModelItem } from "../types";
 
 suite("normalizeUserModels migration", () => {
@@ -224,5 +224,56 @@ suite("sanitizeMessages", () => {
 			(out[0].content[0] as vscode.LanguageModelTextPart).value,
 			"s<reminderInstructions>x</reminderInstructions>s"
 		);
+	});
+});
+
+suite("AsyncMutex", () => {
+	test("serves concurrent acquires in FIFO order", async () => {
+		const mutex = new AsyncMutex();
+		const order: string[] = [];
+		const releaseA = await mutex.acquire();
+		const pB = mutex.acquire().then((release) => {
+			order.push("b");
+			release();
+		});
+		const pC = mutex.acquire().then((release) => {
+			order.push("c");
+			release();
+		});
+		order.push("a");
+		releaseA();
+		await Promise.all([pB, pC]);
+		assert.deepStrictEqual(order, ["a", "b", "c"]);
+	});
+
+	test("critical sections never overlap", async () => {
+		const mutex = new AsyncMutex();
+		let inCritical = 0;
+		let overlapped = false;
+		const worker = async () => {
+			const release = await mutex.acquire();
+			try {
+				if (inCritical > 0) {
+					overlapped = true;
+				}
+				inCritical++;
+				// Yield so other workers would interleave without the lock.
+				await new Promise((resolve) => setTimeout(resolve, 1));
+				inCritical--;
+			} finally {
+				release();
+			}
+		};
+		await Promise.all([worker(), worker(), worker()]);
+		assert.strictEqual(overlapped, false);
+	});
+
+	test("is reusable after release", async () => {
+		const mutex = new AsyncMutex();
+		const release1 = await mutex.acquire();
+		release1();
+		const release2 = await mutex.acquire();
+		assert.strictEqual(typeof release2, "function");
+		release2();
 	});
 });

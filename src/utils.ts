@@ -539,3 +539,28 @@ export async function executeWithRetry<T>(fn: () => Promise<T>, retryConfig: Ret
 	});
 	throw lastError || new Error("Retry failed");
 }
+
+/**
+ * A minimal FIFO async mutex.
+ *
+ * {@link AsyncMutex.acquire} returns a promise that resolves to a release
+ * function. The caller MUST invoke the release function exactly once when the
+ * critical section ends (success, failure, or cancellation) — the next
+ * waiting acquire proceeds only after the release. Acquires are served in
+ * arrival order.
+ */
+export class AsyncMutex {
+	private _tail: Promise<void> = Promise.resolve();
+
+	acquire(): Promise<() => void> {
+		let release: () => void = () => {
+			// Unreachable: replaced by the gate's resolver before any await.
+		};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const prev = this._tail;
+		this._tail = gate;
+		return prev.then(() => release);
+	}
+}
