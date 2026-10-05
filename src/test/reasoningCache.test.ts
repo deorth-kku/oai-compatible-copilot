@@ -1,4 +1,5 @@
 import * as assert from "assert";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
 	CancellationToken,
@@ -8,6 +9,8 @@ import {
 	ProvideLanguageModelChatResponseOptions,
 } from "vscode";
 import { CommonApi } from "../commonApi";
+import { countMessageTokens } from "../provideToken";
+import { TokenizerManager } from "../tokenizer/tokenizerManager";
 import type { HFModelItem } from "../types";
 
 suite("reasoningCache migration", () => {
@@ -286,5 +289,188 @@ suite("reasoningCache content hash", () => {
 
 		const map = (CommonApi as unknown as { _reasoningByTurn: Map<string, string> })._reasoningByTurn;
 		assert.strictEqual(map.size, 0);
+	});
+});
+
+suite("reasoningCache status-bar token count", () => {
+	setup(() => {
+		// Point the tokenizer at the repo root (compiled tests live in out/test)
+		// so textTokenLength uses the real encoder instead of failing to 0.
+		TokenizerManager.setExtensionPath(path.join(__dirname, "..", ".."));
+	});
+
+	teardown(() => {
+		(CommonApi as unknown as { _memento: vscode.Memento | null })._memento = null;
+		(CommonApi as unknown as { _reasoningByTurn: Map<string, string> })._reasoningByTurn.clear();
+	});
+
+	// The shipped @types/vscode enum only defines User/Assistant; the runtime
+	// System role is 3 (mapRole treats anything not User/Assistant as system).
+	const SYSTEM_ROLE = 3 as unknown as vscode.LanguageModelChatMessageRole;
+	const sys = (value: string): vscode.LanguageModelChatRequestMessage => ({
+		role: SYSTEM_ROLE,
+		name: undefined,
+		content: [new vscode.LanguageModelTextPart(value)],
+	});
+	const text = (value: string): vscode.LanguageModelTextPart => new vscode.LanguageModelTextPart(value);
+	const thinking = (value: string): vscode.LanguageModelThinkingPart =>
+		new vscode.LanguageModelThinkingPart(value);
+	const assistant = (
+		content: vscode.LanguageModelChatRequestMessage["content"]
+	): vscode.LanguageModelChatRequestMessage => ({
+		role: vscode.LanguageModelChatMessageRole.Assistant,
+		name: "assistant",
+		content,
+	});
+
+	/**
+	 * Minimal concrete subclass exposing the protected capture API so the
+	 * write flow can be exercised without a real stream.
+	 */
+	class CapturingApi extends CommonApi<unknown, unknown> {
+		setConv(messages: readonly LanguageModelChatRequestMessage[]): void {
+			this.setConvIdFromMessages(messages);
+		}
+
+		begin(): void {
+			this.beginReasoningCapture();
+		}
+
+		addReasoning(text: string): void {
+			this.cacheReasoning(text);
+		}
+
+		addParts(parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart>): void {
+			this._turnAssistantParts.push(...parts);
+		}
+
+		end(): void {
+			this.endTurnCapture();
+		}
+
+		convertMessages(
+			_messages: readonly LanguageModelChatRequestMessage[],
+			_modelConfig: { includeReasoningInRequest: boolean }
+		): unknown[] {
+			return [];
+		}
+
+		prepareRequestBody(
+			rb: unknown,
+			_um: HFModelItem | undefined,
+			_options?: ProvideLanguageModelChatResponseOptions
+		): unknown {
+			return rb;
+		}
+
+		async processStreamingResponse(
+			_responseBody: ReadableStream<Uint8Array>,
+			_progress: Progress<LanguageModelResponsePart2>,
+			_token: CancellationToken
+		): Promise<void> {
+			return;
+		}
+
+		createMessage(
+			_model: HFModelItem,
+			_systemPrompt: string,
+			_messages: { role: string; content: string }[],
+			_baseUrl: string,
+			_apiKey: string
+		): AsyncGenerator<{ type: "text"; text: string }> {
+			throw new Error("not implemented");
+		}
+	}
+
+	// No trailing whitespace: the cache lookup trims before returning, so the
+	// counted text is the trimmed trace (same as convertMessages replays).
+	const CACHED_TRACE = "a long cached reasoning trace".repeat(20);
+
+	test("counts the longer of round-tripped thinking and cached trace", async () => {
+		const history = [sys("You are helpful.\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111")];
+		const api = new CapturingApi("test-model");
+		api.setConv(history);
+		api.begin();
+		api.addReasoning(CACHED_TRACE);
+		api.addParts([text("Let me check the file.")]);
+		api.end();
+
+		const convId = CommonApi.computeConvId(history);
+		// VS Code round-trips only a fragment of the turn's thinking.
+		const msg = assistant([thinking("."), text("Let me check the file.")]);
+
+		const withoutCache = await countMessageTokens(msg, { includeReasoningInRequest: true });
+		const withCache = await countMessageTokens(msg, { includeReasoningInRequest: true }, convId);
+		assert.ok(withCache > withoutCache, "cached trace should add tokens");
+
+		// The count must equal counting the full cached trace verbatim.
+		const fullMsg = assistant([thinking(CACHED_TRACE), text("Let me check the file.")]);
+		const fullCount = await countMessageTokens(fullMsg, { includeReasoningInRequest: true });
+		assert.strictEqual(withCache, fullCount);
+	});
+
+	test("no convId (non-OpenAI api mode) → only round-tripped thinking counted", async () => {
+		const history = [sys("You are helpful.\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111")];
+		const api = new CapturingApi("test-model");
+		api.setConv(history);
+		api.begin();
+		api.addReasoning(CACHED_TRACE);
+		api.addParts([text("Let me check the file.")]);
+		api.end();
+
+		const msg = assistant([thinking("."), text("Let me check the file.")]);
+		const noConv = await countMessageTokens(msg, { includeReasoningInRequest: true }, undefined);
+		const fragmentOnly = await countMessageTokens(
+			assistant([thinking("."), text("Let me check the file.")]),
+			{ includeReasoningInRequest: true }
+		);
+		assert.strictEqual(noConv, fragmentOnly);
+	});
+
+	test("includeReasoningInRequest=false → thinking never counted, cache or not", async () => {
+		const history = [sys("You are helpful.\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111")];
+		const api = new CapturingApi("test-model");
+		api.setConv(history);
+		api.begin();
+		api.addReasoning(CACHED_TRACE);
+		api.addParts([text("Let me check the file.")]);
+		api.end();
+
+		const convId = CommonApi.computeConvId(history);
+		const msg = assistant([thinking(CACHED_TRACE), text("Let me check the file.")]);
+		const withConv = await countMessageTokens(msg, { includeReasoningInRequest: false }, convId);
+		const withoutConv = await countMessageTokens(msg, { includeReasoningInRequest: false });
+		const textOnly = await countMessageTokens(
+			assistant([text("Let me check the file.")]),
+			{ includeReasoningInRequest: false }
+		);
+		assert.strictEqual(withConv, withoutConv);
+		assert.strictEqual(withConv, textOnly);
+	});
+
+	test("thinking part dropped from history → cached trace still counted", async () => {
+		const history = [sys("You are helpful.\n- VSCODE_TARGET_SESSION_LOG: /x/aaaa-1111")];
+		const api = new CapturingApi("test-model");
+		api.setConv(history);
+		api.begin();
+		api.addReasoning(CACHED_TRACE);
+		api.addParts([text("Let me check the file.")]);
+		api.end();
+
+		const convId = CommonApi.computeConvId(history);
+		// VS Code dropped the assistant ThinkingPart on rebuild: only the text
+		// survives into history. convertMessages still replays the cached trace,
+		// so the status-bar count must account for it even with no round-tripped
+		// thinking part present.
+		const msg = assistant([text("Let me check the file.")]);
+
+		const withoutCache = await countMessageTokens(msg, { includeReasoningInRequest: true });
+		const withCache = await countMessageTokens(msg, { includeReasoningInRequest: true }, convId);
+		assert.ok(withCache > withoutCache, "dropped thinking should still count the cached trace");
+
+		// Must equal counting the full cached trace verbatim.
+		const fullMsg = assistant([thinking(CACHED_TRACE), text("Let me check the file.")]);
+		const fullCount = await countMessageTokens(fullMsg, { includeReasoningInRequest: true });
+		assert.strictEqual(withCache, fullCount);
 	});
 });

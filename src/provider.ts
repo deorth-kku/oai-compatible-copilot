@@ -271,8 +271,24 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					? sanitizeMessages(messages, { stripReminder, splitSystemPrompt })
 					: messages;
 
+			// The reasoning replay cache is only consulted (and written) by the
+			// two OpenAI-mode implementations, so only there can the outgoing
+			// request carry a longer cached thinking trace than the
+			// round-tripped history. Derive the conversation id from the
+			// ORIGINAL (pre-sanitize) messages — see CommonApi.computeConvId —
+			// so the status-bar counter accounts for the cached trace.
+			const reasoningConvId =
+				apiMode === "openai" || apiMode === "openai-responses" ? CommonApi.computeConvId(messages) : undefined;
+
 			// Update Token Usage
-			updateContextStatusBar(requestMessages, options.tools, model, this.statusBarItem, modelConfig);
+			updateContextStatusBar(
+				requestMessages,
+				options.tools,
+				model,
+				this.statusBarItem,
+				modelConfig,
+				reasoningConvId
+			);
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
@@ -975,7 +991,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		if (usage && usage.total_tokens > 0) {
 			updateContextStatusBarFromUsage(usage, model, this.statusBarItem);
 		} else {
-			void updateContextStatusBar(messages, tools, model, this.statusBarItem, modelConfig);
+			// Reuse the write-side conversation id so the fallback count also
+			// accounts for any cached reasoning trace convertMessages replays.
+			// getConvId() is "" for non-OpenAI api modes (setConvIdFromMessages
+			// is only called there), so the reasoning-cache lookup is a no-op
+			// for those modes — no explicit api-mode guard needed.
+			void updateContextStatusBar(messages, tools, model, this.statusBarItem, modelConfig, api.getConvId());
 		}
 	}
 

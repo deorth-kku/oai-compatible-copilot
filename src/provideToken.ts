@@ -3,6 +3,7 @@ import { LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { tokenizerManager } from "./tokenizer/tokenizerManager";
 import { getImageDimensions } from "./tokenizer/imageUtils";
 import { createDataUrl, extractToolResultMedia } from "./utils";
+import { CommonApi } from "./commonApi";
 
 /*
  * Each message comes with 3 tokens per message due to special characters
@@ -15,13 +16,15 @@ export const BaseTokensPerName = 1;
 
 export async function countMessageTokens(
 	text: string | LanguageModelChatRequestMessage,
-	modelConfig: { includeReasoningInRequest: boolean }
+	modelConfig: { includeReasoningInRequest: boolean },
+	convId?: string
 ): Promise<number> {
 	if (typeof text === "string") {
 		return textTokenLength(text);
 	} else {
 		// For complex messages, calculate tokens for each part separately
 		let totalTokens = BaseTokensPerMessage + BaseTokensPerName;
+		let thinkingText = "";
 
 		for (const part of text.content) {
 			if (part instanceof vscode.LanguageModelTextPart) {
@@ -47,13 +50,40 @@ export async function countMessageTokens(
 				const { text } = extractToolResultMedia(part as { content?: ReadonlyArray<unknown> });
 				totalTokens += await textTokenLength(text);
 			} else if (part instanceof vscode.LanguageModelThinkingPart) {
-				// Thinking Token
+				// Thinking Token (accumulated; the cached-trace comparison
+				// happens after the loop, mirroring convertMessages)
 				if (modelConfig.includeReasoningInRequest) {
-					const thinkingText = Array.isArray(part.value) ? part.value.join("") : part.value;
-					totalTokens += await textTokenLength(thinkingText);
+					thinkingText += Array.isArray(part.value) ? part.value.join("") : part.value;
 				}
 			} else {
 				console.warn(`Unknown part type: ${JSON.stringify(part)}`);
+			}
+		}
+
+		if (modelConfig.includeReasoningInRequest) {
+			// The outgoing request may replay a LONGER cached reasoning trace
+			// for this turn than VS Code round-tripped into history (see
+			// CommonApi / convertMessages). Count what will actually be sent:
+			// the longer of the round-tripped thinking and the cached trace.
+			//
+			// The cache lookup runs whenever a convId is available, even when no
+			// thinking part was round-tripped (thinkingText === "") — that is the
+			// primary case the reasoning cache exists for (VS Code drops the
+			// assistant ThinkingPart on rebuild), and convertMessages still
+			// replays the cached trace there (`joinedThinking || cached`).
+			//
+			// Trim to match convertMessages, which compares/sends the trimmed
+			// round-tripped thinking against the trimmed cached trace.
+			let effective = thinkingText.trim();
+			if (convId) {
+				const turnKey = CommonApi.computeTurnHashFromParts(text.content ?? []);
+				const cached = turnKey ? CommonApi.lookupCachedReasoning(convId, turnKey) : undefined;
+				if (cached && cached.length > effective.length) {
+					effective = cached;
+				}
+			}
+			if (effective) {
+				totalTokens += await textTokenLength(effective);
 			}
 		}
 		return totalTokens;

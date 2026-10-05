@@ -276,7 +276,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * between them; then the first user message; then a structural signature so
 	 * distinct histories still get distinct ids.
 	 */
-	private static computeConvId(messages: readonly LanguageModelChatRequestMessage[]): string {
+	static computeConvId(messages: readonly LanguageModelChatRequestMessage[]): string {
 		let sessionLogValue: string | null = null;
 		let userCount = 0;
 		let firstUserText = "";
@@ -501,6 +501,24 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		CommonApi._reasoningByTurn.delete(fullKey);
 		CommonApi._reasoningByTurn.set(fullKey, cached);
 		return cached.trim();
+	}
+
+	/**
+	 * Side-effect-free public read of the per-turn reasoning cache
+	 * (conversation-scoped). Unlike {@link getCachedReasoning} it does NOT
+	 * refresh LRU recency — it exists so the status-bar token counter can
+	 * account for the cached full trace that `convertMessages` will replay
+	 * into the outgoing request.
+	 * @param convId The conversation id (from `computeConvId`); "" for none.
+	 * @param turnKey The turn's content hash (from `computeTurnHashFromParts`).
+	 */
+	static lookupCachedReasoning(convId: string, turnKey: string): string | undefined {
+		if (!turnKey) {
+			return undefined;
+		}
+		const fullKey = convId ? `${convId}#${turnKey}` : turnKey;
+		const cached = CommonApi._reasoningByTurn.get(fullKey);
+		return cached === undefined ? undefined : cached.trim();
 	}
 
 	/** System prompts to include in requests. */

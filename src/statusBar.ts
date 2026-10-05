@@ -55,16 +55,20 @@ export function createProgressBar(usedTokens: number, maxTokens: number): string
  * @param model The language model information
  * @param statusBarItem The status bar item to update
  * @param modelConfig Configuration including reasoning settings
+ * @param convId Conversation id scoping the reasoning replay cache; pass
+ * undefined when the request will not replay cached reasoning traces
+ * (non-OpenAI api modes) so only round-tripped thinking is counted.
  */
 export async function updateContextStatusBar(
 	messages: readonly LanguageModelChatRequestMessage[],
 	tools: readonly LanguageModelChatTool[] | undefined,
 	model: LanguageModelChatInformation,
 	statusBarItem: vscode.StatusBarItem,
-	modelConfig: { includeReasoningInRequest: boolean }
+	modelConfig: { includeReasoningInRequest: boolean },
+	convId?: string
 ): Promise<void> {
 	// Calculate tokens for all messages in parallel
-	const tokenCountPromises = messages.map((message) => countMessageTokens(message, modelConfig));
+	const tokenCountPromises = messages.map((message) => countMessageTokens(message, modelConfig, convId));
 
 	const tokenCounts = await Promise.all(tokenCountPromises);
 	const messagesTokens = tokenCounts.reduce((sum, count) => sum + count, 0);
