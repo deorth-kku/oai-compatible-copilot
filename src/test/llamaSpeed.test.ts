@@ -135,19 +135,19 @@ suite("LlamaSpeedDisplay", () => {
 		display.update(id, { phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 943.0 t/s 45%");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 
 		// Later PP chunk: tooltip must not be rewritten.
 		display.update(id, { phase: "pp", line: "PP 1000.0 t/s 60%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 1000.0 t/s 60%");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 
 		// TG phase: status bar line updates, tooltip stays frozen.
 		display.update(id, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(zap) TG 32.3 t/s 42 tok");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 
 		display.end(id);
 	});
@@ -162,7 +162,7 @@ suite("LlamaSpeedDisplay", () => {
 		await sleep(FLUSH_WAIT_MS);
 
 		assert.strictEqual(item.text, "$(zap) TG — t/s 1 tok");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 		display.end(id);
 	});
 
@@ -180,27 +180,57 @@ suite("LlamaSpeedDisplay", () => {
 		display.end(id);
 	});
 
-	test("reasoning control: PP and TG clicks both open the end-reasoning command", async () => {
+	test("reasoning control: the click follows the registered-task state", async () => {
 		const item = createItemStub();
-		const display = new LlamaSpeedDisplay(item);
-		const id = display.begin(true);
+		let registered = false;
+		const display = new LlamaSpeedDisplay(item, () => registered);
+		const id = display.begin();
 
-		// PP phase: tooltip carries the click hint; the click opens the
-		// end-reasoning picker (only other TG streams would be listed).
+		// PP phase: no task is registered yet, so the default command applies
+		// and the tooltip carries no click hint.
 		display.update(id, { phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To End Reasoning");
-		assert.strictEqual(item.command, END_REASONING_COMMAND);
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
+		assert.strictEqual(item.command, "oaicopilot.openConfig");
 
-		// TG phase: same command; tooltip stays frozen.
+		// TG starts: the task is registered, so the click opens the
+		// end-reasoning picker and the tooltip gains the click hint.
+		registered = true;
 		display.update(id, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.command, END_REASONING_COMMAND);
 		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To End Reasoning");
 
-		// Request end restores the default command.
+		// Task ends: the default command is restored.
+		registered = false;
 		display.end(id);
 		assert.strictEqual(item.command, "oaicopilot.openConfig");
+	});
+
+	test("click follows registered tasks, not the latest request", async () => {
+		const item = createItemStub();
+		let aRegistered = false;
+		const display = new LlamaSpeedDisplay(item, () => aRegistered);
+
+		// A starts and registers its task; B (no task) starts after it.
+		const a = display.begin();
+		aRegistered = true;
+		display.update(a, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
+		const b = display.begin();
+		display.update(b, { phase: "pp", line: "PP 100.0 t/s 10%", detail: "prompt 10/100 · cache 10.0%" });
+		await sleep(FLUSH_WAIT_MS);
+		// B is the latest request but has no task; A's task keeps the
+		// end-reasoning command.
+		assert.strictEqual(item.command, END_REASONING_COMMAND);
+
+		// A's task ends while B is still in flight: no registered task
+		// remains, so the default command is restored even though B is live.
+		aRegistered = false;
+		display.end(a);
+		await sleep(FLUSH_WAIT_MS);
+		assert.strictEqual(item.command, "oaicopilot.openConfig");
+
+		display.end(b);
 	});
 
 	test("without reasoning control the default command and tooltip are untouched", async () => {
@@ -210,7 +240,7 @@ suite("LlamaSpeedDisplay", () => {
 
 		display.update(id, { phase: "pp", line: "PP 943.0 t/s 45%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 		assert.strictEqual(item.command, "oaicopilot.openConfig");
 
 		display.update(id, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
@@ -227,14 +257,14 @@ suite("LlamaSpeedDisplay", () => {
 		const a = display.begin();
 		display.update(a, { phase: "pp", line: "PP 100%", detail: "prompt 128/128 · cache 100.0%" });
 		await sleep(FLUSH_WAIT_MS);
-		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%\nClick To Open Configuration UI");
 		display.end(a);
 
 		// Second request never sees PP: tooltip must keep its old value.
 		const b = display.begin();
 		display.update(b, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 10 tok" });
 		await sleep(FLUSH_WAIT_MS);
-		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/128 · cache 100.0%\nClick To Open Configuration UI");
 		display.end(b);
 	});
 
@@ -264,27 +294,27 @@ suite("LlamaSpeedDisplay", () => {
 		display.update(b, { phase: "pp", line: "PP 100.0 t/s 10%", detail: "prompt 10/100 · cache 10.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 100.0 t/s 10%");
-		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%");
+		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%\nClick To Open Configuration UI");
 
 		// A's (the earlier request's) chunk arrives LATER: it must not
 		// clobber the rendered line, and its tooltip detail must not leak in.
 		display.update(a, { phase: "pp", line: "PP 900.0 t/s 90%", detail: "prompt 90/100 · cache 90.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 100.0 t/s 10%");
-		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%");
+		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%\nClick To Open Configuration UI");
 
 		// A advances to TG: the display still follows B.
 		display.update(a, { phase: "tg", line: "TG 32.3 t/s 42 tok", detail: "prompt 512 tok" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 100.0 t/s 10%");
-		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%");
+		assert.strictEqual(item.tooltip, "prompt 10/100 · cache 10.0%\nClick To Open Configuration UI");
 
 		// B ends: the display falls back to A's latest state AND A's tooltip
 		// snapshot, so line and tooltip agree again.
 		display.end(b);
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(zap) TG 32.3 t/s 42 tok");
-		assert.strictEqual(item.tooltip, "prompt 90/100 · cache 90.0%");
+		assert.strictEqual(item.tooltip, "prompt 90/100 · cache 90.0%\nClick To Open Configuration UI");
 
 		display.end(a);
 		assert.strictEqual(item.command, "oaicopilot.openConfig");
@@ -303,14 +333,14 @@ suite("LlamaSpeedDisplay", () => {
 		display.update(a, { phase: "pp", line: "PP 943.0 t/s 60%", detail: "prompt 128/512 · cache 25.0%" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(loading~spin) PP 943.0 t/s 60%");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 
 		// B's first chunk switches the display to B; B never saw PP, so the
 		// tooltip keeps A's snapshot.
 		display.update(b, { phase: "tg", line: "TG — t/s 1 tok", detail: "prompt 512 tok" });
 		await sleep(FLUSH_WAIT_MS);
 		assert.strictEqual(item.text, "$(zap) TG — t/s 1 tok");
-		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%");
+		assert.strictEqual(item.tooltip, "prompt 128/512 · cache 25.0%\nClick To Open Configuration UI");
 
 		display.end(b);
 		display.end(a);

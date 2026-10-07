@@ -226,7 +226,6 @@ export function parseLlamaSpeed(parsed: Record<string, unknown>): LlamaSpeedStat
 /** Per-request bookkeeping for the shared display. */
 interface LiveRequest {
 	id: number;
-	reasoningControl: boolean;
 	/** Latest speed state reported for this request (undefined before the first chunk). */
 	state: LlamaSpeedState | undefined;
 	/** First PP cache detail; rendered into the tooltip exactly once. */
@@ -258,12 +257,25 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	private readonly _requests: LiveRequest[] = [];
 	/** Id of the request whose tooltip snapshot is currently shown. */
 	private _tooltipShownFor: number | undefined;
+	/** Whether the tooltip currently shows the reasoning-control click hint. */
+	private _tooltipHintShown: boolean | undefined;
 	private _timer: NodeJS.Timeout | undefined;
 	private _lastWrite = 0;
 	/** Command the slot carries outside of a live request (open configuration). */
 	private readonly defaultCommand: string | vscode.Command | undefined;
 
-	constructor(private readonly item: vscode.StatusBarItem) {
+	constructor(
+		private readonly item: vscode.StatusBarItem,
+		/**
+		 * Returns whether at least one reasoning-control task is currently in
+		 * flight (registered with the ReasoningControlManager, the single
+		 * source of truth for such tasks). The status bar click follows this:
+		 * while any such task is live, clicking opens the end-reasoning
+		 * picker; only when none remain does the default command (open
+		 * configuration UI) apply.
+		 */
+		private readonly hasReasoningControl: () => boolean = () => false
+	) {
 		this.defaultCommand = this.item.command;
 	}
 
@@ -280,15 +292,11 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 	/**
 	 * Mark the start of a request and return its id, which must be passed back
 	 * to {@link update} and {@link end}.
-	 * @param reasoningControl Whether the request opted into real-time reasoning
-	 * control (llama.cpp + `reasoning_control`); enables the click-to-end
-	 * behavior and the tooltip hint while the stream is live.
 	 */
-	begin(reasoningControl = false): number {
+	begin(): number {
 		const id = this._nextId++;
 		this._requests.push({
 			id,
-			reasoningControl,
 			state: undefined,
 			tooltipDetail: undefined,
 		});
@@ -316,15 +324,17 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		if (index === -1) {
 			return;
 		}
-		const wasLatest = index === this._requests.length - 1;
 		this._requests.splice(index, 1);
 		if (this._requests.length === 0) {
 			this.cancelPending();
-			// Restore the default click behavior (open configuration UI).
-			this.item.command = this.defaultCommand;
-		} else if (wasLatest) {
-			// The rendered request changed: the next flush falls back to the
-			// previous request's state and tooltip snapshot.
+			// No live request owns the slot: restore the click behavior from
+			// the reasoning-control state (default command when none remain).
+			this.item.command = this.hasReasoningControl() ? END_REASONING_COMMAND : this.defaultCommand;
+		} else {
+			// A request ended: the rendered request may have changed (if it was
+			// the latest) and the click command always may (it follows the
+			// reasoning-control state, which can change when ANY request ends).
+			// Refresh via the next flush.
 			this.scheduleFlush();
 		}
 	}
@@ -362,32 +372,38 @@ export class LlamaSpeedDisplay implements vscode.Disposable {
 		if (!latest) {
 			return;
 		}
-		// Click behavior follows the most recently started request: with
-		// reasoning control wired, clicking the status bar opens the
-		// end-reasoning picker in both phases: during TG the requesting
-		// stream is listed (it is registered once TG starts), during PP it is
-		// not registered yet, so the picker only offers any OTHER stream
-		// already in TG (or nothing, if there is none). Without it, the
-		// default command (open configuration UI) applies.
-		this.item.command = latest.reasoningControl ? END_REASONING_COMMAND : this.defaultCommand;
+		// Click behavior follows ANY in-flight reasoning-control task (the
+		// single source of truth is the ReasoningControlManager): the moment
+		// the first such task is registered, clicking the status bar opens
+		// the end-reasoning picker; only when none remain does the default
+		// command (open configuration UI) apply.
+		const hasReasoningControl = this.hasReasoningControl();
+		this.item.command = hasReasoningControl ? END_REASONING_COMMAND : this.defaultCommand;
 		const req = this.renderedRequest();
 		if (req) {
 			const state = req.state as LlamaSpeedState;
 			const icon = state.phase === "pp" ? "$(loading~spin)" : "$(zap)";
 			this.item.backgroundColor = undefined;
 			this.item.text = `${icon} ${state.line}`;
-			// Tooltip: write the rendered request's first PP cache snapshot
-			// exactly once (even if the first flush already carries a TG
-			// state, i.e. PP and TG arrived within the same throttle window).
-			// When the display falls back to an earlier request after the
-			// latest one ended, that request's snapshot is written then. With
-			// reasoning control wired, the click hint is appended so the hint
-			// is visible from the PP phase on.
-			if (req.tooltipDetail !== undefined && this._tooltipShownFor !== req.id) {
-				this.item.tooltip = latest.reasoningControl
-					? `${req.tooltipDetail}\nClick To End Reasoning`
-					: req.tooltipDetail;
-				this._tooltipShownFor = req.id;
+			// Tooltip: the rendered request's first PP cache snapshot (frozen
+			// per request) plus, while any reasoning-control task is in
+			// flight, a click hint. Rewrite when the rendered request changes
+			// OR when the reasoning-control state changes, so the hint appears
+			// as soon as the first task is registered and disappears when the
+			// last one ends.
+			if (req.tooltipDetail !== undefined) {
+				const snapshotChanged = this._tooltipShownFor !== req.id;
+				const hintChanged = this._tooltipHintShown !== hasReasoningControl;
+				if (snapshotChanged || hintChanged) {
+					// The hint always reflects the ACTUAL click behavior: end
+					// reasoning while a task is registered, otherwise open the
+					// configuration UI.
+					this.item.tooltip = hasReasoningControl
+						? `${req.tooltipDetail}\nClick To End Reasoning`
+						: `${req.tooltipDetail}\nClick To Open Configuration UI`;
+					this._tooltipShownFor = req.id;
+					this._tooltipHintShown = hasReasoningControl;
+				}
 			}
 		}
 		this._lastWrite = Date.now();

@@ -827,7 +827,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				if (!response.body) {
 					throw new Error("No response body from OAI Compatible API");
 				}
-				const speedId = this.llamaSpeed.begin(reasoningControlWired);
+				const speedId = this.llamaSpeed.begin();
 				openaiApi.onSpeedUpdate = (state) => {
 					this.llamaSpeed.update(speedId, state);
 					// Register the stream for reasoning control only once TG has

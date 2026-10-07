@@ -39,8 +39,14 @@ export function activate(context: vscode.ExtensionContext) {
 	TokenizerManager.initialize(context.extensionPath);
 
 	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
-	const llamaSpeedDisplay = new LlamaSpeedDisplay(tokenCountStatusBarItem);
 	const reasoningControl = new ReasoningControlManager();
+	// The status bar click follows the reasoning-control state: while any
+	// task is registered with the manager, clicking opens the end-reasoning
+	// picker; the manager is the single source of truth for those tasks.
+	const llamaSpeedDisplay = new LlamaSpeedDisplay(
+		tokenCountStatusBarItem,
+		() => reasoningControl.listTargets().length > 0
+	);
 	context.subscriptions.push(llamaSpeedDisplay, reasoningControl);
 	const provider = new HuggingFaceChatModelProvider(
 		context.secrets,
