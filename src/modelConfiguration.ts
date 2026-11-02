@@ -81,16 +81,56 @@ export function createReasoningEffortConfigurationSchema(
 	} as const;
 }
 
+/**
+ * Build the "Context Window" configuration schema that drives the VS Code
+ * model picker's context-size segmented control.
+ *
+ * The picker always offers the same five tiers — `auto` plus 25% / 50% / 75% /
+ * 100% of the model's configured context length — so the enum values are
+ * derived from `contextLength` (in tokens) rather than read from user config.
+ * The `auto` tier is the string `"auto"`; the percentage tiers are numeric
+ * token counts.
+ *
+ * The value the user selects is intentionally IGNORED by this extension — the
+ * picker only exists to let the user control when VS Code auto-compacts the
+ * conversation. See `provideModel.ts`.
+ */
+export function createContextSizeConfigurationSchema(contextLength: number): ModelConfigurationSchema {
+	const base = Math.max(0, Math.floor(contextLength));
+	const tier = (fraction: number) => Math.floor(base * fraction);
+	return {
+		properties: {
+			contextSize: {
+				type: ["string", "number"],
+				title: "Context Window",
+				enum: ["auto", tier(0.25), tier(0.5), tier(0.75), base],
+				enumItemLabels: ["Auto", "25%", "50%", "75%", "100%"],
+				default: "auto",
+				group: "tokens",
+			},
+		},
+	};
+}
+
 export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseOptions & {
 	readonly modelConfiguration?: Record<string, unknown>;
 	readonly configuration?: Record<string, unknown>;
+};
+
+/**
+ * A VS Code model-picker configuration schema. A single schema object may carry
+ * multiple `properties` (e.g. both `reasoningEffort` and `contextSize`), each
+ * tagged with a `group` so the picker can route it to the right UI section.
+ */
+export type ModelConfigurationSchema = {
+	readonly properties: Record<string, unknown>;
 };
 
 export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
 	readonly isUserSelectable?: boolean;
 	readonly detail?: string;
 	readonly tooltip?: string;
-	readonly configurationSchema?: ReturnType<typeof createReasoningEffortConfigurationSchema>;
+	readonly configurationSchema?: ModelConfigurationSchema;
 };
 
 /**

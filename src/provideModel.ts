@@ -3,6 +3,7 @@ import { CancellationToken, LanguageModelChatInformation } from "vscode";
 
 import type { HFApiMode, HFModelItem, HFModelsResponse } from "./types";
 import {
+	createContextSizeConfigurationSchema,
 	createReasoningEffortConfigurationSchema,
 	getModelDefaultReasoningEffort,
 	isReasoningEffortPickerEnabled,
@@ -63,6 +64,22 @@ export async function prepareLanguageModelChatInformation(
 						? modelDefault
 						: standardSupported[0];
 
+				// The context-window picker is always offered: it lets the user
+				// control when VS Code auto-compacts the conversation. The value the
+				// user selects is ignored by this extension (see
+				// createContextSizeConfigurationSchema). Merge it with the optional
+				// reasoning-effort property into a single configurationSchema.
+				// unsure why, but vscode seems to treat contextSize.enum values as maxInput instead of context_size
+				const properties: Record<string, unknown> = {
+					...createContextSizeConfigurationSchema(maxInput).properties,
+				};
+				if (pickerEnabled && schemaDefault) {
+					properties.reasoningEffort = createReasoningEffortConfigurationSchema(
+						schemaDefault,
+						m.supported_efforts
+					).properties.reasoningEffort;
+				}
+
 				return {
 					id: modelId,
 					name: modelName,
@@ -75,14 +92,7 @@ export async function prepareLanguageModelChatInformation(
 					maxOutputTokens: maxOutput,
 					isUserSelectable: true,
 					isBYOK: true,
-					...(pickerEnabled && schemaDefault
-						? {
-							configurationSchema: createReasoningEffortConfigurationSchema(
-								schemaDefault,
-								m.supported_efforts
-							),
-						}
-						: {}),
+					configurationSchema: { properties },
 					capabilities: {
 						toolCalling: true,
 						imageInput: m?.vision ?? false,
@@ -132,11 +142,12 @@ export async function prepareLanguageModelChatInformation(
 					maxOutputTokens: maxOutput,
 					isUserSelectable: true,
 					isBYOK: true,
+					configurationSchema: createContextSizeConfigurationSchema(maxInput),
 					capabilities: {
 						toolCalling: true,
 						imageInput: vision,
 					},
-				} satisfies LanguageModelChatInformation);
+				} satisfies ModelPickerChatInformation);
 			}
 
 			if (entries.length === 0) {
@@ -155,11 +166,12 @@ export async function prepareLanguageModelChatInformation(
 					maxOutputTokens: maxOutput,
 					isUserSelectable: true,
 					isBYOK: true,
+					configurationSchema: createContextSizeConfigurationSchema(maxInput),
 					capabilities: {
 						toolCalling: true,
 						imageInput: true,
 					},
-				} satisfies LanguageModelChatInformation);
+				} satisfies ModelPickerChatInformation);
 			}
 
 			return entries;

@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { AnthropicApi } from "../anthropic/anthropicApi";
 import { GeminiApi } from "../gemini/geminiApi";
 import {
+	createContextSizeConfigurationSchema,
 	createReasoningEffortConfigurationSchema,
 	getConfiguredReasoningEffort,
 	isReasoningEffortPickerEnabled,
@@ -108,7 +109,14 @@ suite("modelConfiguration", () => {
 			assert.strictEqual(info.detail, "deepseek (OAICopilot)");
 			assert.strictEqual(info.isUserSelectable, true);
 			assert.strictEqual(info.isBYOK, true);
-			assert.deepStrictEqual(info.configurationSchema, createReasoningEffortConfigurationSchema("medium"));
+			// The schema always carries the context-size picker, merged with the
+			// reasoning-effort property (deepSeekModel.context_length is 1_000_000).
+			assert.deepStrictEqual(info.configurationSchema, {
+				properties: {
+					...createContextSizeConfigurationSchema(1_000_000).properties,
+					...createReasoningEffortConfigurationSchema("medium").properties,
+				},
+			});
 		} finally {
 			cts.dispose();
 			await config.update("oaicopilot.models", previousModels, vscode.ConfigurationTarget.Global);
@@ -133,7 +141,50 @@ suite("modelConfiguration", () => {
 			const info = infos.find((item) => item.id === "deepseek-v4-flash") as ModelPickerChatInformation | undefined;
 
 			assert.ok(info, "deepseek-v4-flash should be registered");
-			assert.strictEqual(info.configurationSchema, undefined);
+			// The context-window picker is always offered, so the schema is present
+			// even without a reasoning effort; only the reasoningEffort property
+			// is absent.
+			assert.ok(info.configurationSchema, "context size schema should always be present");
+			assert.strictEqual(info.configurationSchema?.properties.reasoningEffort, undefined);
+			assert.ok(info.configurationSchema?.properties.contextSize);
+		} finally {
+			cts.dispose();
+			await config.update("oaicopilot.models", previousModels, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test("builds the context size enum from the configured context length", () => {
+		const prop = createContextSizeConfigurationSchema(128000).properties.contextSize as Record<string, unknown>;
+		assert.strictEqual(prop.title, "Context Window");
+		assert.strictEqual(prop.group, "tokens");
+		assert.strictEqual(prop.default, "auto");
+		assert.deepStrictEqual(prop.enum, ["auto", 32000, 64000, 96000, 128000]);
+		assert.deepStrictEqual(prop.enumItemLabels, ["Auto", "25%", "50%", "75%", "100%"]);
+
+		// Non-round context lengths are truncated per tier.
+		const odd = createContextSizeConfigurationSchema(131072).properties.contextSize as Record<string, unknown>;
+		assert.deepStrictEqual(odd.enum, ["auto", 32768, 65536, 98304, 131072]);
+	});
+
+	test("registers the context size picker for every user model", async () => {
+		const config = vscode.workspace.getConfiguration();
+		const previousModels = config.get<unknown>("oaicopilot.models", []);
+		const cts = new vscode.CancellationTokenSource();
+		const model: HFModelItem = { ...deepSeekModel, id: "ctx-size-model", displayName: undefined };
+
+		try {
+			await config.update("oaicopilot.models", [model], vscode.ConfigurationTarget.Global);
+
+			const infos = await prepareLanguageModelChatInformation({ silent: true }, cts.token, {} as vscode.SecretStorage);
+			const info = infos.find((item) => item.id === "ctx-size-model") as ModelPickerChatInformation | undefined;
+
+			assert.ok(info, "ctx-size-model should be registered");
+			const prop = info.configurationSchema?.properties.contextSize as Record<string, unknown> | undefined;
+			assert.ok(prop, "contextSize property should be present");
+			// deepSeekModel.context_length is 1_000_000.
+			assert.deepStrictEqual(prop?.enum, ["auto", 250000, 500000, 750000, 1000000]);
+			// The reasoning-effort property is also present for this model.
+			assert.ok(info.configurationSchema?.properties.reasoningEffort);
 		} finally {
 			cts.dispose();
 			await config.update("oaicopilot.models", previousModels, vscode.ConfigurationTarget.Global);
