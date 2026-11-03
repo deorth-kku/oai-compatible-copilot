@@ -167,12 +167,13 @@ suite("llamaSlotCache", () => {
 			assert.strictEqual(findIdleSlot(slots), 1);
 		});
 
-		test("never-used wins even over a used slot with 0 tokens", () => {
+		test("n_prompt_tokens: 0 is treated as never-used (ties with absent field)", () => {
 			const slots = [
 				{ id: 0, is_processing: false, n_prompt_tokens: 0 },
 				{ id: 1, is_processing: false },
 			];
-			assert.strictEqual(findIdleSlot(slots), 1);
+			// Both are "never used"; first one wins.
+			assert.strictEqual(findIdleSlot(slots), 0);
 		});
 
 		test("picks the smallest n_prompt_tokens when all slots are used", () => {
@@ -225,8 +226,8 @@ suite("llamaSlotCache", () => {
 			assert.strictEqual(allSlotsEmpty([fresh(0), used(1, 42)]), false);
 		});
 
-		test("a purged slot keeps n_prompt_tokens: 0 → false (conservative)", () => {
-			assert.strictEqual(allSlotsEmpty([used(0, 0), fresh(1)]), false);
+		test("n_prompt_tokens: 0 is treated as empty", () => {
+			assert.strictEqual(allSlotsEmpty([used(0, 0), fresh(1)]), true);
 		});
 
 		test("a busy slot always carries the field → false", () => {

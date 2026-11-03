@@ -56,7 +56,7 @@ export interface LlamaSlot {
 	is_processing: boolean;
 	/**
 	 * Total prompt tokens the slot has processed since it was created. ABSENT
-	 * on slots that have never been used — their presence/absence is the
+	 * or `0` on slots that have never been used — absence or zero is the
 	 * "has this slot been used" signal for idle-slot selection.
 	 */
 	n_prompt_tokens?: number;
@@ -152,7 +152,8 @@ export function extractSystemText(messages: ReadonlyArray<{ role: string; conten
  * Pick the best idle slot from a `GET /slots` response. Pure for testability.
  *
  * Preference among idle slots (`is_processing === false`):
- * 1. Slots that have never been used — the `n_prompt_tokens` field is ABSENT.
+ * 1. Slots that have never been used — the `n_prompt_tokens` field is ABSENT
+ *    or `0`.
  * 2. Otherwise, the slot with the smallest `n_prompt_tokens`.
  * Ties (several never-used slots, or several with the same minimum
  * `n_prompt_tokens`) resolve to the first one in array order.
@@ -164,7 +165,7 @@ export function findIdleSlot(slots: readonly LlamaSlot[]): number | undefined {
 		if (!slot || typeof slot.id !== "number" || slot.is_processing !== false) {
 			continue;
 		}
-		const tokens = typeof slot.n_prompt_tokens === "number" ? slot.n_prompt_tokens : undefined;
+		const tokens = typeof slot.n_prompt_tokens === "number" && slot.n_prompt_tokens > 0 ? slot.n_prompt_tokens : undefined;
 		if (best === undefined) {
 			best = slot;
 			bestTokens = tokens;
@@ -193,21 +194,15 @@ export function findIdleSlot(slots: readonly LlamaSlot[]): number | undefined {
  * The server emits `n_prompt_tokens` on a slot only while that slot has a
  * current or previous task (`server_slot::to_json` writes the field from
  * `task ? task : task_prev`). A slot that has never been used since the
- * server started therefore LACKS the field; a slot that WAS used keeps it
- * (even `0` after a purge/erase). So every slot lacking `n_prompt_tokens`
- * means no slot has ever held a prompt since the server started — the
- * in-memory KV cache is gone and a disk `.bin` can be restored without
- * discarding live VRAM KV.
- *
- * Conservative by design: a purged-but-used slot counts as NOT empty, so the
- * restart override can miss a restore opportunity but never discards live
- * VRAM KV. Busy slots always carry the field, so they are never empty.
+ * server started therefore LACKS the field; a slot that WAS used keeps it.
+ * A value of `0` is also treated as empty (no live prompt KV), so the
+ * condition for "empty" is: field absent OR `n_prompt_tokens === 0`.
  *
  * An empty slot array is NOT "all empty": there is nothing to restore into,
  * and the caller should treat it as "feature unavailable".
  */
 export function allSlotsEmpty(slots: readonly LlamaSlot[]): boolean {
-	return slots.length > 0 && slots.every((s) => typeof s?.n_prompt_tokens !== "number");
+	return slots.length > 0 && slots.every((s) => typeof s?.n_prompt_tokens !== "number" || s.n_prompt_tokens === 0);
 }
 
 /**
