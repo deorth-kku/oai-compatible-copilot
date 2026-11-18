@@ -122,9 +122,9 @@ export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseO
  * multiple `properties` (e.g. both `reasoningEffort` and `contextSize`), each
  * tagged with a `group` so the picker can route it to the right UI section.
  */
-export type ModelConfigurationSchema = {
-	readonly properties: Record<string, Record<string, any>>;
-};
+export interface ModelConfigurationSchema {
+	readonly properties: Record<string, Record<string, unknown>>;
+}
 
 export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
 	readonly isUserSelectable?: boolean;
