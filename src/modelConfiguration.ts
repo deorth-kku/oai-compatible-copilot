@@ -123,7 +123,7 @@ export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseO
  * tagged with a `group` so the picker can route it to the right UI section.
  */
 export type ModelConfigurationSchema = {
-	readonly properties: Record<string, unknown>;
+	readonly properties: Record<string, Record<string, any>>;
 };
 
 export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {

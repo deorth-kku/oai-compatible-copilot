@@ -70,7 +70,7 @@ export async function prepareLanguageModelChatInformation(
 				// createContextSizeConfigurationSchema). Merge it with the optional
 				// reasoning-effort property into a single configurationSchema.
 				// unsure why, but vscode seems to treat contextSize.enum values as maxInput instead of context_size
-				const properties: Record<string, unknown> = {
+				const properties: Record<string, Record<string, any>> = {
 					...createContextSizeConfigurationSchema(maxInput).properties,
 				};
 				if (pickerEnabled && schemaDefault) {
