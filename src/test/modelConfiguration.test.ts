@@ -110,10 +110,11 @@ suite("modelConfiguration", () => {
 			assert.strictEqual(info.isUserSelectable, true);
 			assert.strictEqual(info.isBYOK, true);
 			// The schema always carries the context-size picker, merged with the
-			// reasoning-effort property (deepSeekModel.context_length is 1_000_000).
+			// reasoning-effort property. The picker is built from maxInput
+			// (context_length - max_tokens = 1_000_000 - 384_000).
 			assert.deepStrictEqual(info.configurationSchema, {
 				properties: {
-					...createContextSizeConfigurationSchema(1_000_000).properties,
+					...createContextSizeConfigurationSchema(1_000_000 - 384_000).properties,
 					...createReasoningEffortConfigurationSchema("medium").properties,
 				},
 			});
@@ -181,8 +182,9 @@ suite("modelConfiguration", () => {
 			assert.ok(info, "ctx-size-model should be registered");
 			const prop = info.configurationSchema?.properties.contextSize as Record<string, unknown> | undefined;
 			assert.ok(prop, "contextSize property should be present");
-			// deepSeekModel.context_length is 1_000_000.
-			assert.deepStrictEqual(prop?.enum, ["auto", 250000, 500000, 750000, 1000000]);
+			// The picker is built from maxInput (context_length - max_tokens
+			// = 1_000_000 - 384_000 = 616_000).
+			assert.deepStrictEqual(prop?.enum, ["auto", 154000, 308000, 462000, 616000]);
 			// The reasoning-effort property is also present for this model.
 			assert.ok(info.configurationSchema?.properties.reasoningEffort);
 		} finally {
