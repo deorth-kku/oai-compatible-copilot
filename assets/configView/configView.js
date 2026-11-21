@@ -13,6 +13,14 @@ const state = {
 // Store the action to be performed after confirmation
 const pendingConfirmations = new Map();
 
+// llama.cpp LoRA "fast" variant: adapter list lazily fetched from the
+// server's /lora-adapters endpoint when the user opens the "LoRA Fast
+// Adapter" dropdown (mirrors the Model ID dropdown's lazy /v1/models
+// fetch). The list is per-model (?model={model_id}), so it is re-fetched
+// when the model ID changes.
+let loraAdaptersFetchedFor = "";
+let loraAdapters = [];
+
 // Global Configuration elements
 const baseUrlInput = document.getElementById("baseUrl");
 const apiKeyInput = document.getElementById("apiKey");
@@ -69,6 +77,10 @@ const modelSplitSystemPromptInput = document.getElementById("modelSplitSystemPro
 const modelSplitSystemPromptField = document.getElementById("modelSplitSystemPromptField");
 const modelReasoningControlInput = document.getElementById("modelReasoningControl");
 const modelReasoningControlField = document.getElementById("modelReasoningControlField");
+const modelLoraFastInput = document.getElementById("modelLoraFast");
+const modelLoraFastScaleInput = document.getElementById("modelLoraFastScale");
+const modelLlamaLoraFastField = document.getElementById("modelLlamaLoraFastField");
+const modelLlamaLoraFastScaleField = document.getElementById("modelLlamaLoraFastScaleField");
 const supportedEffortsGroup = document.getElementById("modelSupportedEfforts");
 const modelThinkingTypeInput = document.getElementById("modelThinkingType");
 const modelHeadersInput = document.getElementById("modelHeaders");
@@ -329,6 +341,28 @@ window.addEventListener("message", (event) => {
 			dropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch models. Check the Developer Console for details.</div>`;
 			console.error("[oaicopilot] Failed to fetch models:", message.error);
 			break;
+		case "loraAdaptersFetched": {
+			// Handle the response from fetchLoraAdapters (GET /lora-adapters).
+			// Ignore a stale response for a model id that has since changed.
+			if (message.modelId !== modelIdInput.value.trim()) {
+				break;
+			}
+			loraAdaptersFetchedFor = message.modelId;
+			loraAdapters = message.adapters || [];
+			populateLoraFastDropdown();
+			break;
+		}
+		case "loraAdaptersFetchError": {
+			// Handle error from fetchLoraAdapters. Deliberately NOT marking
+			// the model as fetched, so re-focusing the dropdown retries.
+			if (message.modelId !== modelIdInput.value.trim()) {
+				break;
+			}
+			loraAdapters = [];
+			setLoraFastPlaceholder(`Fetch failed: ${message.error}`);
+			console.error("[oaicopilot] Failed to fetch LoRA adapters:", message.error);
+			break;
+		}
 		case "confirmResponse":
 			// Handle confirmation responses
 			const pendingAction = pendingConfirmations.get(message.id);
@@ -577,6 +611,10 @@ function resetModelForm() {
 	modelCacheIdIncludeReasoningInput.value = "";
 	modelSplitSystemPromptInput.value = "";
 	modelReasoningControlInput.value = "";
+	modelLoraFastScaleInput.value = "";
+	loraAdaptersFetchedFor = "";
+	loraAdapters = [];
+	resetLoraFastDropdown();
 	uncheckSupportedEfforts();
 	syncReasoningEffortOptions();
 	updateOptimizationVisibility();
@@ -639,6 +677,18 @@ function collectModelFormData() {
 			modelCacheIdIncludeReasoningInput.value ? modelCacheIdIncludeReasoningInput.value === "true" : undefined,
 		split_system_prompt: modelSplitSystemPromptInput.value ? modelSplitSystemPromptInput.value === "true" : undefined,
 		reasoning_control: modelReasoningControlInput.value ? modelReasoningControlInput.value === "true" : undefined,
+		// llama.cpp LoRA "fast" variant: { id, scale? } from the two
+		// dedicated fields (id absent -> no fast variant).
+		llama_lora_fast:
+			modelLoraFastInput.value !== "" && !isNaN(parseInt(modelLoraFastInput.value, 10))
+				? {
+						id: parseInt(modelLoraFastInput.value, 10),
+						scale:
+							modelLoraFastScaleInput.value !== "" && !isNaN(parseFloat(modelLoraFastScaleInput.value))
+								? parseFloat(modelLoraFastScaleInput.value)
+								: undefined,
+				  }
+				: undefined,
 		max_completion_tokens: modelMaxCompletionTokensInput.value
 			? parseInt(modelMaxCompletionTokensInput.value)
 			: undefined,
@@ -725,8 +775,8 @@ function syncReasoningEffortOptions() {
 
 // Show/hide the backend-specific fields based on the selected optimization
 // type: "Reasoning Exclude" is OpenRouter-only; disk cache, slot timeout,
-// cache-id reasoning inclusion, system prompt splitting, and reasoning
-// control are llama.cpp-only.
+// cache-id reasoning inclusion, system prompt splitting, reasoning control,
+// and the LoRA fast variant fields are llama.cpp-only.
 function updateOptimizationVisibility() {
 	const isOpenRouter = modelOptimizationInput.value === "openrouter";
 	modelReasoningExcludeField.style.display = isOpenRouter ? "" : "none";
@@ -736,7 +786,84 @@ function updateOptimizationVisibility() {
 	modelCacheIdIncludeReasoningField.style.display = isLlamaCpp ? "" : "none";
 	modelSplitSystemPromptField.style.display = isLlamaCpp ? "" : "none";
 	modelReasoningControlField.style.display = isLlamaCpp ? "" : "none";
+	modelLlamaLoraFastField.style.display = isLlamaCpp ? "" : "none";
+	modelLlamaLoraFastScaleField.style.display = isLlamaCpp ? "" : "none";
 }
+
+// Reset the "LoRA Fast Adapter" dropdown to a single "None" option.
+function resetLoraFastDropdown() {
+	modelLoraFastInput.innerHTML = '<option value="">None</option>';
+}
+
+// Populate the "LoRA Fast Adapter" dropdown from the fetched adapter list,
+// preserving the current selection if it is still a valid option.
+function populateLoraFastDropdown() {
+	const current = modelLoraFastInput.value;
+	modelLoraFastInput.innerHTML = "";
+	const none = document.createElement("option");
+	none.value = "";
+	none.textContent = "None";
+	modelLoraFastInput.appendChild(none);
+	loraAdapters.forEach((a) => {
+		const opt = document.createElement("option");
+		opt.value = String(a.id);
+		let label = `#${a.id} — ${a.path || "unknown"}`;
+		if (a.task_name) {
+			label += ` (${a.task_name})`;
+		}
+		if (typeof a.scale === "number") {
+			label += ` [scale ${a.scale}]`;
+		}
+		opt.textContent = label;
+		modelLoraFastInput.appendChild(opt);
+	});
+	if (current !== "" && Array.from(modelLoraFastInput.options).some((o) => o.value === current)) {
+		modelLoraFastInput.value = current;
+	}
+}
+
+// Show a failed-fetch placeholder in the "LoRA Fast Adapter" dropdown,
+// keeping the currently selected/configured option so a save does not
+// silently drop the configured adapter.
+function setLoraFastPlaceholder(text) {
+	const current = modelLoraFastInput.value;
+	modelLoraFastInput.innerHTML = "";
+	const none = document.createElement("option");
+	none.value = "";
+	none.textContent = "None";
+	modelLoraFastInput.appendChild(none);
+	if (current !== "") {
+		const opt = document.createElement("option");
+		opt.value = current;
+		opt.textContent = `#${current}`;
+		modelLoraFastInput.appendChild(opt);
+	}
+	const err = document.createElement("option");
+	err.value = "";
+	err.textContent = text;
+	err.disabled = true;
+	modelLoraFastInput.appendChild(err);
+	modelLoraFastInput.value = current;
+}
+
+// Fetch the llama.cpp server's LoRA adapter list when the user opens the
+// "LoRA Fast Adapter" dropdown (mirrors the Model ID dropdown's lazy
+// /v1/models fetch). The list is per-model (?model={model_id}), so it is
+// re-fetched when the model ID changed since the last fetch.
+modelLoraFastInput.addEventListener("focus", () => {
+	const modelId = modelIdInput.value.trim();
+	if (!modelId || loraAdaptersFetchedFor === modelId) {
+		return;
+	}
+	const provider = modelProviderInput.value;
+	vscode.postMessage({
+		type: "fetchLoraAdapters",
+		baseUrl: modelBaseUrlInput.value.trim() || state.baseUrl,
+		apiKey: (provider && state.providerKeys[provider]) || state.apiKey,
+		modelId,
+		headers: state.providerInfo[provider] ? state.providerInfo[provider].headers : undefined,
+	});
+});
 
 // Build thinking configuration object from form fields
 function buildThinkingConfig() {
@@ -1244,6 +1371,21 @@ function populateModelForm(model) {
 		model.cache_id_include_reasoning !== undefined ? String(model.cache_id_include_reasoning) : "";
 	modelSplitSystemPromptInput.value = model.split_system_prompt !== undefined ? String(model.split_system_prompt) : "";
 	modelReasoningControlInput.value = model.reasoning_control !== undefined ? String(model.reasoning_control) : "";
+	// llama.cpp LoRA "fast" variant: the adapter list is fetched lazily when
+	// the user opens the dropdown; until then the configured id is shown as a
+	// bare option so the value survives a save without re-fetching.
+	modelLoraFastScaleInput.value =
+		model.llama_lora_fast && model.llama_lora_fast.scale !== undefined ? String(model.llama_lora_fast.scale) : "";
+	loraAdaptersFetchedFor = "";
+	loraAdapters = [];
+	resetLoraFastDropdown();
+	if (model.llama_lora_fast && typeof model.llama_lora_fast.id === "number") {
+		const opt = document.createElement("option");
+		opt.value = String(model.llama_lora_fast.id);
+		opt.textContent = `#${model.llama_lora_fast.id}`;
+		modelLoraFastInput.appendChild(opt);
+		modelLoraFastInput.value = String(model.llama_lora_fast.id);
+	}
 	setSupportedEfforts(model.supported_efforts);
 	syncReasoningEffortOptions();
 	// Populate reasoning configuration (only `exclude` is actively used)

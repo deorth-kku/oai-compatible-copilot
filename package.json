@@ -379,6 +379,20 @@
 								"type": "boolean",
 								"default": false,
 									"description": "Enable real-time reasoning control for llama.cpp OpenAI-compatible requests. When enabled, the token status bar becomes clickable while a completion is in flight: during token generation (TG) clicking it shows a picker of all registered in-flight streams and, on selection, calls the server's POST /chat/completions/control endpoint (action: 'reasoning_end') to force-end that stream's reasoning block; during prompt processing (PP) clicking it shows the same picker, which only lists streams already in TG. The status bar tooltip shows a 'Click To End Reasoning' hint. Requires apiMode='openai' and optimization='llama.cpp'."
+							},
+							"llama_lora_fast": {
+								"type": "object",
+								"description": "llama.cpp LoRA 'fast' variant: maps a server-loaded LoRA adapter to a synthetic '{id}-fast' model so Copilot's Speed selector can offer it as the Fast variant. Selecting Fast sends the request with a per-request \"lora\" field (all other adapters fall back to scale 0 for that request). Requires apiMode='openai' and optimization='llama.cpp'.",
+								"properties": {
+									"id": {
+										"type": "number",
+										"description": "Adapter index from the llama.cpp server's GET /lora-adapters?model={model_id} response."
+									},
+									"scale": {
+										"type": "number",
+										"description": "Per-request scale for the adapter. Defaults to the adapter's server-side scale when omitted."
+									}
+								}
 							}
 						},
 						"required": [

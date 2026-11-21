@@ -12,6 +12,7 @@ import {
 	type ReasoningEffortPickerValue,
 } from "./modelConfiguration";
 import { normalizeUserModels } from "./utils";
+import { loraFastTwinId, offersLlamaLoraFast } from "./llamaLora";
 import { VersionManager } from "./versionManager";
 import { fetchGeminiModels } from "./gemini/geminiApi";
 import { fetchOllamaModels } from "./ollama/ollamaApi";
@@ -41,7 +42,7 @@ export async function prepareLanguageModelChatInformation(
 		// Return user-provided models directly
 		infos = userModels
 			.filter((m) => !m.id.startsWith("__provider__"))
-			.map((m) => {
+			.flatMap((m): ModelPickerChatInformation[] => {
 				const contextLen = m?.context_length ?? DEFAULT_CONTEXT_LENGTH;
 				const maxOutput = m?.max_completion_tokens ?? m?.max_tokens ?? DEFAULT_MAX_TOKENS;
 				const maxInput = Math.max(1, contextLen - maxOutput);
@@ -80,7 +81,7 @@ export async function prepareLanguageModelChatInformation(
 					).properties.reasoningEffort;
 				}
 
-				return {
+				const base: ModelPickerChatInformation = {
 					id: modelId,
 					name: modelName,
 					detail: detail,
@@ -98,6 +99,28 @@ export async function prepareLanguageModelChatInformation(
 						imageInput: m?.vision ?? false,
 					},
 				} satisfies ModelPickerChatInformation;
+
+				// llama.cpp LoRA "fast" twin: VS Code pairs `{id}` with
+				// `{id}-fast` (same vendor) and renders a Standard/Fast Speed
+				// selector in the Details card. Selecting Fast routes the
+				// request to the SAME base model with a per-request `lora`
+				// field (see provider.ts). The suffix rides on the entry id
+				// (after any `::configId`) so VS Code's endsWith("-fast")
+				// pairing matches. `offersLlamaLoraFast` gates this on the
+				// default OpenAI-compatible api mode because provider.ts only
+				// applies the `lora` field there.
+				if (offersLlamaLoraFast(m)) {
+					return [
+						base,
+						{
+							...base,
+							id: loraFastTwinId(base.id),
+							name: `${modelName} (fast)`,
+							tooltip: `${detail} — LoRA fast variant`,
+						},
+					];
+				}
+				return [base];
 			});
 	} else {
 		// Fallback: Fetch models from API

@@ -523,8 +523,26 @@
 											<option value="true">True</option>
 											<option value="false">False</option>
 										</select>
+									</div>								<div class="field" id="modelLlamaLoraFastField">
+									<label for="modelLoraFast">LoRA Fast Adapter</label>
+									<div class="field-description">
+										Map one of the server's loaded LoRA adapters to a synthetic "{model}-fast" model so Copilot's
+										Speed selector offers it as the Fast variant (the request is sent with a per-request "lora"
+										field). The adapter list is fetched from the llama.cpp server's /lora-adapters endpoint when
+										this dropdown is opened. Requires optimization="llama.cpp".
 									</div>
+									<select id="modelLoraFast" class="model-input">
+										<option value="">None</option>
+									</select>
 								</div>
+								<div class="field" id="modelLlamaLoraFastScaleField">
+									<label for="modelLoraFastScale">LoRA Fast Scale</label>
+									<div class="field-description">
+										Per-request scale for the selected LoRA adapter. Leave empty to use the adapter's server-side
+										scale.
+									</div>
+									<input id="modelLoraFastScale" type="number" class="model-input" step="0.1" placeholder="1.0" />
+								</div>								</div>
 							</div>
 							<!-- Custom Headers and Extra Parameters -->
 							<div class="row">

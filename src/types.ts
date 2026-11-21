@@ -230,6 +230,24 @@ export interface HFModelItem {
 	reasoning_control?: boolean;
 
 	/**
+	 * llama.cpp LoRA "fast" variant: maps ONE of the server's already-loaded
+	 * LoRA adapters to a synthetic `{id}-fast` model entry, so VS Code's
+	 * Speed selector (Standard/Fast in the Details card) can offer it as the
+	 * fast twin. Selecting the Fast twin sends the chat request with a
+	 * per-request `lora` field (`[{"id": <id>, "scale": <scale>?}]`); the
+	 * server applies ONLY the listed adapter (all other adapters fall back
+	 * to scale 0 for that request).
+	 *
+	 * VS Code has a single "fast" slot per model, so only one adapter can be
+	 * mapped. The adapter `id` is the index from the server's
+	 * `GET /lora-adapters?model={model_id}` response (the config page's
+	 * "LoRA Fast Adapter" dropdown fetches that list when opened).
+	 *
+	 * Only effective with `apiMode: "openai"` and `optimization: "llama.cpp"`.
+	 */
+	llama_lora_fast?: LlamaLoraFastConfig;
+
+	/**
 	 * API mode: "openai" for OpenAI Chat Completions, "openai-responses" for OpenAI Responses,
 	 * "ollama" for Ollama native API, "anthropic" for Anthropic Messages, "gemini" for Gemini native API.
 	 * Default is "openai".
@@ -262,6 +280,22 @@ export interface HFModelItem {
 	 * Defaults to `true`. Set to `false` for upstream providers that reject `cache_control`.
 	 */
 	cache_control?: boolean;
+}
+
+/**
+ * llama.cpp LoRA "fast" variant configuration (see `HFModelItem.llama_lora_fast`).
+ */
+export interface LlamaLoraFastConfig {
+	/**
+	 * Adapter index (`id`) from the llama.cpp server's
+	 * `GET /lora-adapters?model={model_id}` response.
+	 */
+	id: number;
+	/**
+	 * Per-request scale for the adapter. When omitted, the adapter's
+	 * server-side (global) scale is used.
+	 */
+	scale?: number;
 }
 
 /**

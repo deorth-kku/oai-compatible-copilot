@@ -51,6 +51,7 @@ import {
 	restoreSlotCache,
 	saveSlotCache,
 } from "./llamaSlotCache";
+import { buildLoraRequestField, loraFastTwinId, offersLlamaLoraFast } from "./llamaLora";
 
 /**
  * Default timeout (ms) for llama.cpp `/slots` requests when the model config
@@ -248,9 +249,46 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						(!parsedModelId.configId && !um.configId))
 			);
 
+			// llama.cpp LoRA "fast" twins (see provideModel.ts): VIRTUAL entries
+			// synthesized from configured models that carry `llama_lora_fast`.
+			// The request id is matched against the REAL entries above first —
+			// so a model literally named `*-fast` wins — and then against the
+			// virtual twins (`{entryId}-fast`, where entryId includes any
+			// `::configId`). The twin match must PRECEDE the lenient base-ID
+			// fallback below, which would otherwise resolve `base::cfg-fast`
+			// to the base model WITHOUT the adapter. A twin hit routes to the
+			// base model; the OpenAI request then carries the configured
+			// adapter in the per-request `lora` field (applied below).
+			let isLlamaLoraFast = false;
+			if (!um) {
+				const twin = userModels.find((m) => {
+					if (!offersLlamaLoraFast(m)) {
+						return false;
+					}
+					const entryId = m.configId ? `${m.id}::${m.configId}` : m.id;
+					return loraFastTwinId(entryId) === model.id;
+				});
+				if (twin) {
+					um = twin;
+					isLlamaLoraFast = true;
+				}
+			}
+
 			// If still no model found, try to find any model matching the base ID (most lenient match, for backward compatibility)
 			if (!um) {
 				um = userModels.find((um) => um.id === parsedModelId.baseId);
+			}
+
+			// Fail loudly when a configured-models setup has neither a real nor
+			// a virtual entry for the requested id: continuing with
+			// `um === undefined` would silently fall back to the global
+			// baseUrl/apiKey. When NO user models are configured at all, the
+			// picker is populated from the server's model list and
+			// `um === undefined` is the normal global-config path.
+			if (!um && userModels.length > 0) {
+				throw new Error(
+					`Model "${model.id}" not found in the configured models (oaicopilot.models).`
+				);
 			}
 
 			// Check if using Ollama native API mode
@@ -690,6 +728,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					stream_options: { include_usage: true },
 				};
 				requestBody = openaiApi.prepareRequestBody(requestBody, um, options);
+
+				// llama.cpp LoRA "fast" variant: the per-request `lora` field
+				// applies ONLY the configured adapter (adapters not listed
+				// fall back to scale 0 on the server). Applied AFTER
+				// prepareRequestBody so an `extra.lora` parameter cannot
+				// silently override the explicit fast-variant configuration.
+				if (isLlamaLoraFast && um?.llama_lora_fast) {
+					const loraField = buildLoraRequestField(um.llama_lora_fast);
+					if (loraField) {
+						requestBody.lora = loraField;
+					}
+				}
 
 				// Experimental llama.cpp disk KV cache reuse (session-aware): the
 				// restore/save decision is made per request from a matrix over

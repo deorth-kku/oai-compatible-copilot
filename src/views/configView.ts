@@ -3,6 +3,8 @@ import type { HFApiMode, HFModelItem } from "../types";
 import { normalizeUserModels, parseModelId } from "../utils";
 import { fetchModels } from "../provideModel";
 import { VersionManager } from "../versionManager";
+import { fetchLoraAdapters, type LlamaLoraAdapter } from "../llamaLora";
+import { getServerRootUrl } from "../llamaSlotCache";
 
 interface InitPayload {
 	baseUrl: string;
@@ -60,6 +62,13 @@ type IncomingMessage =
 			headers?: Record<string, string>;
 	  }
 	| {
+			type: "fetchLoraAdapters";
+			baseUrl: string;
+			apiKey: string;
+			modelId: string;
+			headers?: Record<string, string>;
+	  }
+	| {
 			type: "addProvider";
 			provider: string;
 			baseUrl?: string;
@@ -86,6 +95,8 @@ type IncomingMessage =
 type OutgoingMessage =
 	| { type: "init"; payload: InitPayload }
 	| { type: "modelsFetched"; models: HFModelItem[] }
+	| { type: "loraAdaptersFetched"; modelId: string; adapters: LlamaLoraAdapter[] }
+	| { type: "loraAdaptersFetchError"; modelId: string; error: string }
 	| { type: "confirmResponse"; id: string; confirmed: boolean };
 
 export class ConfigViewPanel {
@@ -187,6 +198,38 @@ export class ConfigViewPanel {
 					console.error("[oaicopilot] fetchModels failed", err);
 					const errorMessage = err instanceof Error ? err.message : String(err);
 					this.panel.webview.postMessage({ type: "modelsFetchError", error: errorMessage });
+				}
+				break;
+			}
+			case "fetchLoraAdapters": {
+				// llama.cpp LoRA adapter list for the "LoRA Fast Adapter"
+				// dropdown: GET {root}/lora-adapters?model={modelId}. The
+				// ?model= param is required in llama.cpp router mode.
+				const rootUrl = getServerRootUrl(message.baseUrl);
+				const headers: Record<string, string> = {
+					"Content-Type": "application/json",
+					"User-Agent": VersionManager.getUserAgent(),
+				};
+				if (message.apiKey) {
+					headers["Authorization"] = `Bearer ${message.apiKey}`;
+				}
+				if (message.headers) {
+					Object.assign(headers, message.headers);
+				}
+				const adapters = await fetchLoraAdapters(
+					rootUrl,
+					message.modelId,
+					headers,
+					AbortSignal.timeout(30_000)
+				);
+				if (adapters === undefined) {
+					this.panel.webview.postMessage({
+						type: "loraAdaptersFetchError",
+						modelId: message.modelId,
+						error: `GET ${rootUrl}/lora-adapters?model=${encodeURIComponent(message.modelId)} failed`,
+					});
+				} else {
+					this.panel.webview.postMessage({ type: "loraAdaptersFetched", modelId: message.modelId, adapters });
 				}
 				break;
 			}
